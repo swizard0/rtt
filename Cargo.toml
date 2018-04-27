@@ -6,3 +6,6 @@ license = "MIT"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
 
 [dependencies]
+
+[dev-dependencies]
+rand = "0.4"
