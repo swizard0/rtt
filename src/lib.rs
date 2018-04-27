@@ -5,6 +5,7 @@ pub trait RandomTree {
     type Node: RandomTreeNode<State = Self::State, Error = Self::Error>;
 
     fn root(self) -> Self::Node;
+    fn nearest_node(self, state: &Self::State) -> Result<Self::Node, Self::Error>;
 }
 
 pub trait RandomTreeNode: Sized {
@@ -14,6 +15,11 @@ pub trait RandomTreeNode: Sized {
     type Path;
 
     fn expand(self, state: Self::State) -> Result<Self, Self::Error>;
+
+    fn adjust_random_state(&self, random_state: Self::State) -> Result<Self::State, Self::Error> {
+        Ok(random_state)
+    }
+
     fn into_tree(self) -> Self::Tree;
     fn into_path(self) -> Self::Path;
 }
@@ -80,8 +86,10 @@ pub fn plan<RT, RN, S, L, GC>(
         }
 
         if let Some(random_state) = sampler.sample(&rtt).map_err(Error::Sampler)? {
-
-            unimplemented!()
+            node = rtt.nearest_node(&random_state).map_err(Error::RandomTree)?;
+            let new_state =
+                node.adjust_random_state(random_state).map_err(Error::RandomTree)?;
+            node = node.expand(new_state).map_err(Error::RandomTree)?;
         } else {
             return Ok(Outcome::NoPathExists);
         }
