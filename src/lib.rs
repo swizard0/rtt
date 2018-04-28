@@ -1,3 +1,5 @@
+pub mod util;
+
 pub trait RandomTree {
     type State;
     type Error;
