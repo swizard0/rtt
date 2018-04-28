@@ -3,7 +3,7 @@ pub trait RandomTree {
     type Error;
     type Node: RandomTreeNode<State = Self::State, Error = Self::Error>;
 
-    fn root(self) -> Self::Node;
+    fn make_root(self, state: Self::State) -> Result<Self::Node, Self::Error>;
     fn nearest_node(self, state: &Self::State) -> Result<Self::Node, Self::Error>;
 }
 
@@ -90,8 +90,7 @@ pub fn plan<RT, RN, S, L, GC>(
           L: Limiter<RT>,
           GC: GoalChecker<RN>,
 {
-    let root = rtt.root();
-    let mut node = root.expand(init).map_err(Error::RandomTree)?;
+    let mut node = rtt.make_root(init).map_err(Error::RandomTree)?;
     if goal_checker.goal_reached(&node).map_err(Error::GoalChecker)? {
         return Ok(Outcome::PathPlanned(node.into_path()));
     }
