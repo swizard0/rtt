@@ -3,18 +3,20 @@ extern crate rand;
 
 use rand::Rng;
 
+type Map<'a> = &'a [&'a [u8]];
+
 fn main() {
     let maze: Map =
         &[b"###############",
-          b"#  *   #      #",
-          b"#      #      #",
-          b"#      #      #",
-          b"#      #      #",
-          b"#             #",
-          b"#      #      #",
-          b"############ ##",
-          b"# @    #      #",
-          b"#      #      #",
+          b"#  *   #      ##########",
+          b"#      #               #",
+          b"#      #      ###  #####",
+          b"#      #      #        #",
+          b"#             #        #",
+          b"#      #      #        #",
+          b"###############        #",
+          b"# @    #               #",
+          b"#      #      ##########",
           b"#      #      #",
           b"#      #      #",
           b"#      #      #",
@@ -22,7 +24,7 @@ fn main() {
           b"###############"];
     let start = find_cell(b'*', maze).unwrap();
     let finish = find_cell(b'@', maze).unwrap();
-    let width = maze[0].len();
+    let width = maze.iter().map(|line| line.len()).max().unwrap();
     let height = maze.len();
 
     let mut rng = rand::thread_rng();
@@ -30,21 +32,26 @@ fn main() {
 
     let rtt = RandomTree::new(maze);
     let outcome = rtt::plan(
+        // RandomTree
         rtt,
+        // Sampler (pick a random cell on a map)
         |_: &_| {
             let row = rng.gen_range(0, height);
             let col = rng.gen_range(0, width);
-            Ok::<_, ()>(Some(State { target: (row, col), }))
+            Ok::<_, ()>(Some((row, col)))
         },
+        // Limiter (stop after 10000 iterations)
         |_: &_| {
             iters += 1;
             Ok::<_, ()>(iters > 10000)
         },
+        // GoalChecker (check if finish is reached)
         |node: &RandomTreeNode<'_>| Ok::<_, ()>(node.coord() == finish),
-        State { target: start, },
+        // init state (start position in a maze)
+        start,
     ).unwrap();
 
-    println!("Map {}x{}, start = {:?}, finish = {:?}", width, height, start, finish);
+    println!("Map with {} rows and {} columns, start = {:?}, finish = {:?}", width, height, start, finish);
     match outcome {
         rtt::Outcome::PathPlanned(path) => {
             println!("Path planned:");
@@ -64,12 +71,8 @@ fn main() {
     }
 }
 
-type Map<'a> = &'a [&'a [u8]];
 type Coord = (usize, usize);
-
-struct State {
-    target: Coord,
-}
+type State = Coord;
 
 struct PathNode {
     coord: Coord,
@@ -96,7 +99,7 @@ impl<'a> rtt::RandomTree for RandomTree<'a> {
 
     fn make_root(mut self, state: Self::State) -> Result<Self::Node, Self::Error> {
         self.0.nodes.clear();
-        self.0.nodes.push(PathNode { coord: state.target, prev: None, });
+        self.0.nodes.push(PathNode { coord: state, prev: None, });
         Ok(RandomTreeNode {
             tree: self.0,
             node: 0,
@@ -104,15 +107,15 @@ impl<'a> rtt::RandomTree for RandomTree<'a> {
     }
 
     fn nearest_node(self, state: &Self::State) -> Result<Self::Node, Self::Error> {
-        let mut nearest: Option<(usize, usize)> = None;
-        for (index, &PathNode { coord, .. }) in self.0.nodes.iter().enumerate() {
-            if let Some(path_iter) = PathLineIter::new(coord, state.target) {
-                let dist = path_iter.count();
-                if nearest.as_ref().map(|m| dist < m.0).unwrap_or(true) {
-                    nearest = Some((dist, index));
-                }
-            }
-        }
+        let nearest = self.0.nodes
+            .iter()
+            .enumerate()
+            .flat_map(|(index, pn)| {
+                StraightPathIter::new(pn.coord, *state)
+                    .map(|it| (it.count(), index))
+            })
+            .min_by_key(|v| v.0);
+
         Ok(RandomTreeNode {
             tree: self.0,
             node: nearest.map(|m| m.1).unwrap_or(0),
@@ -139,7 +142,7 @@ impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
 
     fn expand(mut self, state: Self::State) -> Result<Self, Self::Error> {
         let mut node_index = self.node;
-        if let Some(path_iter) = PathLineIter::new(self.tree.nodes[node_index].coord, state.target) {
+        if let Some(path_iter) = StraightPathIter::new(self.tree.nodes[node_index].coord, state) {
             for coord in path_iter {
                 let next_index = self.tree.nodes.len();
                 self.tree.nodes.push(PathNode { coord, prev: Some(node_index), });
@@ -150,7 +153,7 @@ impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
     }
 
     fn transition(&self, random_state: Self::State) -> Result<Option<Self::State>, Self::Error> {
-        if let Some(path_iter) = PathLineIter::new(self.coord(), random_state.target) {
+        if let Some(path_iter) = StraightPathIter::new(self.coord(), random_state) {
             for coord in path_iter {
                 if self.tree.map[coord.0][coord.1] == b'#' {
                     return Ok(None);
@@ -182,24 +185,24 @@ impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
     }
 }
 
-struct PathLineIter {
+struct StraightPathIter {
     source: Coord,
     target: Coord,
 }
 
-impl PathLineIter {
-    fn new(source: Coord, target: Coord) -> Option<PathLineIter> {
+impl StraightPathIter {
+    fn new(source: Coord, target: Coord) -> Option<StraightPathIter> {
         if source == target {
             None
         } else if source.0 == target.0 || source.1 == target.1 {
-            Some(PathLineIter { source, target, })
+            Some(StraightPathIter { source, target, })
         } else {
             None
         }
     }
 }
 
-impl Iterator for PathLineIter {
+impl Iterator for StraightPathIter {
     type Item = Coord;
 
     fn next(&mut self) -> Option<Self::Item> {
