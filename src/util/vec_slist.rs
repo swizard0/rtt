@@ -5,7 +5,10 @@ pub trait ContextManager {
 
     fn metric_distance(&mut self, node: &Self::State, probe: &Self::State) ->
         Result<Self::Dist, Self::Error>;
-    fn states_eq(&self, state_a: &Self::State, state_b: &Self::State) -> bool;
+
+    fn generate_trans<T>(&self, probe: Self::State, node_trans: T) ->
+        Result<Option<Self::State>, Self::Error>
+        where T: TransChecker<Self::State, Self::Error>;
 
     fn generate_expand<E>(&mut self, probe: Self::State, node_expander: E) ->
         Result<(), Self::Error>
@@ -18,6 +21,12 @@ pub trait ContextManager {
 pub trait Expander<S, E> {
     fn current(&self) -> &S;
     fn expand<I>(self, states: I) -> Result<(), E> where I: Iterator<Item = Result<S, E>>;
+}
+
+pub trait TransChecker<S, E> {
+    fn current(&self) -> &S;
+    fn already_visited<F>(&self, state: &S, states_eq: F) -> Result<bool, E>
+        where F: Fn(&S, &S) -> Result<bool, E>;
 }
 
 struct PathNode<S> {
@@ -121,12 +130,30 @@ impl<CM, S> super::super::RandomTreeNode for RandomTreeNode<CM, S> where CM: Con
     }
 
     fn transition(&self, random_state: Self::State) -> Result<Option<Self::State>, Self::Error> {
-        if self.nodes.iter().any(|n| self.ctx_manager.states_eq(&n.state, &random_state)) {
-            return Ok(None);
+        struct NodesChecker<'a, S: 'a> {
+            nodes: &'a Vec<PathNode<S>>,
+            node: usize,
         }
 
+        impl<'a, S, E> TransChecker<S, E> for NodesChecker<'a, S> {
+            fn current(&self) -> &S {
+                &self.nodes[self.node].state
+            }
 
-        unimplemented!()
+            fn already_visited<F>(&self, state: &S, states_eq: F) -> Result<bool, E>
+                where F: Fn(&S, &S) -> Result<bool, E>
+            {
+                for node in self.nodes.iter() {
+                    if states_eq(state, &node.state)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+
+        self.ctx_manager
+            .generate_trans(random_state, NodesChecker { nodes: &self.nodes, node: self.node, })
     }
 
     fn into_tree(self) -> Self::Tree {
