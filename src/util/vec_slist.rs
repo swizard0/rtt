@@ -98,7 +98,7 @@ impl<CM, S> super::super::RandomTreeNode for RandomTreeNode<CM, S> where CM: Con
     type State = S;
     type Error = CM::Error;
     type Tree = RandomTree<CM, S>;
-    type Path = Vec<S>;
+    type Path = RevPathIterator<S>;
 
     fn expand(mut self, state: Self::State) -> Result<Self, Self::Error> {
         struct NodesExpander<'a, S: 'a> {
@@ -163,15 +163,29 @@ impl<CM, S> super::super::RandomTreeNode for RandomTreeNode<CM, S> where CM: Con
         }
     }
 
-    fn into_path(mut self) -> Self::Path {
-        let mut path = Vec::new();
-        let mut maybe_index = Some(self.node);
-        while let Some(node_index) = maybe_index {
-            let node = self.nodes.swap_remove(node_index);
-            path.push(node.state);
-            maybe_index = node.prev;
+    fn into_path(self) -> Self::Path {
+        RevPathIterator {
+            nodes: self.nodes,
+            node: Some(self.node),
         }
-        path.reverse();
-        path
+    }
+}
+
+pub struct RevPathIterator<S> {
+    nodes: Vec<PathNode<S>>,
+    node: Option<usize>,
+}
+
+impl<S> Iterator for RevPathIterator<S> {
+    type Item = S;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(node_index) = self.node {
+            let node = self.nodes.swap_remove(node_index);
+            self.node = node.prev;
+            Some(node.state)
+        } else {
+            None
+        }
     }
 }
