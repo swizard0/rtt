@@ -22,15 +22,46 @@ fn main() {
           b"###############"];
     let start = find_cell(b'*', maze).unwrap();
     let finish = find_cell(b'@', maze).unwrap();
-    let rtt = RandomTree::new(maze);
+    let width = maze[0].len();
+    let height = maze.len();
 
-    rtt::plan(
+    let mut rng = rand::thread_rng();
+    let mut iters = 0;
+
+    let rtt = RandomTree::new(maze);
+    let outcome = rtt::plan(
         rtt,
-        |r: &_| Ok::<_, ()>(Some(State { target: (1, 4), })),
-        |r: &_| Ok::<_, ()>(false),
-        |n: &_| Ok::<_, ()>(true),
+        |_: &_| {
+            let row = rng.gen_range(0, height);
+            let col = rng.gen_range(0, width);
+            Ok::<_, ()>(Some(State { target: (row, col), }))
+        },
+        |_: &_| {
+            iters += 1;
+            Ok::<_, ()>(iters > 10000)
+        },
+        |node: &RandomTreeNode<'_>| Ok::<_, ()>(node.coord().map(|c| c == finish).unwrap_or(false)),
         State { target: start, },
     ).unwrap();
+
+    println!("Map {}x{}, start = {:?}, finish = {:?}", width, height, start, finish);
+    match outcome {
+        rtt::Outcome::PathPlanned(path) => {
+            println!("Path planned:");
+            for item in cells_iter(maze) {
+                match item {
+                    MapItem::NextRow =>
+                        println!(""),
+                    MapItem::Cell { coord, tile, } =>
+                        print!("{}", if path.contains(&coord) { '+' } else { tile as char }),
+                }
+            }
+        },
+        rtt::Outcome::NoPathExists =>
+            println!("No path exists"),
+        rtt::Outcome::LimitReached =>
+            println!("Planning limit reached"),
+    }
 }
 
 type Map<'a> = &'a [&'a [u8]];
@@ -92,6 +123,12 @@ struct RandomTreeNode<'a> {
     node: Option<usize>,
 }
 
+impl<'a> RandomTreeNode<'a> {
+    fn coord(&self) -> Option<Coord> {
+        self.node.map(|index| self.tree.nodes[index].coord)
+    }
+}
+
 impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
     type State = State;
     type Error = ();
@@ -118,7 +155,7 @@ impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
     }
 
     fn transition(&self, random_state: Self::State) -> Result<Option<Self::State>, Self::Error> {
-        let source = self.node.map(|index| self.tree.nodes[index].coord).unwrap_or(random_state.target);
+        let source = self.coord().unwrap_or(random_state.target);
         if let Some(path_iter) = PathLineIter::new(source, random_state.target) {
             for coord in path_iter {
                 if self.tree.map[coord.0][coord.1] == b'#' {
@@ -185,13 +222,28 @@ impl Iterator for PathLineIter {
     }
 }
 
+enum MapItem {
+    Cell { coord: Coord, tile: u8, },
+    NextRow,
+}
+
+fn cells_iter<'a>(map: Map<'a>) -> Box<Iterator<Item = MapItem> + 'a> {
+    let iter = map.iter()
+        .enumerate()
+        .flat_map(|(row, &line)| {
+            line.iter()
+                .enumerate()
+                .map(move |(col, &tile)| MapItem::Cell { coord: (row, col), tile, })
+                .chain(Some(MapItem::NextRow).into_iter())
+        });
+    Box::new(iter)
+}
+
 fn find_cell<'a>(cell: u8, map: Map<'a>) -> Option<Coord> {
-    for (row, &line) in map.iter().enumerate() {
-        for (col, &tile) in line.iter().enumerate() {
-            if tile == cell {
-                return Some((row, col));
-            }
-        }
-    }
-    None
+    cells_iter(map)
+        .filter_map(|item| match item {
+            MapItem::Cell { tile, coord } if tile == cell => Some(coord),
+            _ => None,
+        })
+        .next()
 }
