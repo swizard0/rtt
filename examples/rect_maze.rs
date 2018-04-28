@@ -40,7 +40,7 @@ fn main() {
             iters += 1;
             Ok::<_, ()>(iters > 10000)
         },
-        |node: &RandomTreeNode<'_>| Ok::<_, ()>(node.coord().map(|c| c == finish).unwrap_or(false)),
+        |node: &RandomTreeNode<'_>| Ok::<_, ()>(node.coord() == finish),
         State { target: start, },
     ).unwrap();
 
@@ -94,11 +94,13 @@ impl<'a> rtt::RandomTree for RandomTree<'a> {
     type Error = ();
     type Node = RandomTreeNode<'a>;
 
-    fn root(self) -> Self::Node {
-        RandomTreeNode {
+    fn make_root(mut self, state: Self::State) -> Result<Self::Node, Self::Error> {
+        self.0.nodes.clear();
+        self.0.nodes.push(PathNode { coord: state.target, prev: None, });
+        Ok(RandomTreeNode {
             tree: self.0,
-            node: None,
-        }
+            node: 0,
+        })
     }
 
     fn nearest_node(self, state: &Self::State) -> Result<Self::Node, Self::Error> {
@@ -113,19 +115,19 @@ impl<'a> rtt::RandomTree for RandomTree<'a> {
         }
         Ok(RandomTreeNode {
             tree: self.0,
-            node: nearest.map(|m| m.1),
+            node: nearest.map(|m| m.1).unwrap_or(0),
         })
     }
 }
 
 struct RandomTreeNode<'a> {
     tree: Tree<'a>,
-    node: Option<usize>,
+    node: usize,
 }
 
 impl<'a> RandomTreeNode<'a> {
-    fn coord(&self) -> Option<Coord> {
-        self.node.map(|index| self.tree.nodes[index].coord)
+    fn coord(&self) -> Coord {
+        self.tree.nodes[self.node].coord
     }
 }
 
@@ -136,27 +138,19 @@ impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
     type Path = Vec<Coord>;
 
     fn expand(mut self, state: Self::State) -> Result<Self, Self::Error> {
-        let node =
-            if let Some(mut node_index) = self.node {
-                if let Some(path_iter) = PathLineIter::new(self.tree.nodes[node_index].coord, state.target) {
-                    for coord in path_iter {
-                        let next_index = self.tree.nodes.len();
-                        self.tree.nodes.push(PathNode { coord, prev: Some(node_index), });
-                        node_index = next_index;
-                    }
-                }
-                Some(node_index)
-            } else {
-                let node_index = self.tree.nodes.len();
-                self.tree.nodes.push(PathNode { coord: state.target, prev: None, });
-                Some(node_index)
-            };
-        Ok(RandomTreeNode { tree: self.tree, node, })
+        let mut node_index = self.node;
+        if let Some(path_iter) = PathLineIter::new(self.tree.nodes[node_index].coord, state.target) {
+            for coord in path_iter {
+                let next_index = self.tree.nodes.len();
+                self.tree.nodes.push(PathNode { coord, prev: Some(node_index), });
+                node_index = next_index;
+            }
+        }
+        Ok(RandomTreeNode { tree: self.tree, node: node_index, })
     }
 
     fn transition(&self, random_state: Self::State) -> Result<Option<Self::State>, Self::Error> {
-        let source = self.coord().unwrap_or(random_state.target);
-        if let Some(path_iter) = PathLineIter::new(source, random_state.target) {
+        if let Some(path_iter) = PathLineIter::new(self.coord(), random_state.target) {
             for coord in path_iter {
                 if self.tree.map[coord.0][coord.1] == b'#' {
                     return Ok(None);
@@ -177,7 +171,7 @@ impl<'a> rtt::RandomTreeNode for RandomTreeNode<'a> {
 
     fn into_path(self) -> Self::Path {
         let mut path = Vec::new();
-        let mut maybe_index = self.node;
+        let mut maybe_index = Some(self.node);
         while let Some(node_index) = maybe_index {
             let node = &self.tree.nodes[node_index];
             path.push(node.coord);
@@ -195,7 +189,9 @@ struct PathLineIter {
 
 impl PathLineIter {
     fn new(source: Coord, target: Coord) -> Option<PathLineIter> {
-        if source.0 == target.0 || source.1 == target.1 {
+        if source == target {
+            None
+        } else if source.0 == target.0 || source.1 == target.1 {
             Some(PathLineIter { source, target, })
         } else {
             None
