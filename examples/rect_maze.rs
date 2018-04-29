@@ -1,7 +1,7 @@
 extern crate rtt;
 extern crate rand;
 
-use rtt::util::vec_slist::{self, TransChecker, Expander};
+use rtt::util::{vec_slist::{self, CMError, TransChecker, Expander}, seen_cache};
 use rand::Rng;
 
 type Map<'a> = &'a [&'a [u8]];
@@ -33,7 +33,10 @@ fn main() {
 
     let outcome = rtt::plan(
         // RandomTree
-        vec_slist::RandomTree::new(ContextManager(maze)),
+        vec_slist::RandomTree::new(
+            ContextManager(maze),
+            seen_cache::hash_set::HashSet::new()
+        ),
         // Sampler (pick a random cell on a map)
         |_: &_| {
             let row = rng.gen_range(0, height);
@@ -46,7 +49,7 @@ fn main() {
             Ok::<_, ()>(iters > 10000)
         },
         // GoalChecker (check if finish is reached)
-        |node: &vec_slist::RandomTreeNode<_, _>| Ok::<_, ()>(node.state() == &finish),
+        |node: &vec_slist::RandomTreeNode<_, _, _>| Ok::<_, ()>(node.state() == &finish),
         // init state (start position in a maze)
         start,
     ).unwrap();
@@ -55,7 +58,7 @@ fn main() {
     match outcome {
         rtt::Outcome::PathPlanned(rev_path) => {
             let path: Vec<_> = rev_path.collect();
-            println!("Path planned:");
+            println!("Path planned in {} iterations:", iters);
             for item in cells_iter(maze) {
                 match item {
                     MapItem::NextRow =>
@@ -98,9 +101,9 @@ impl<'a> vec_slist::ContextManager for ContextManager<'a> {
         })
     }
 
-    fn generate_trans<T>(&self, probe: Self::State, node_trans: T) ->
-        Result<Option<Self::State>, Self::Error>
-        where T: TransChecker<Self::State, Self::Error>
+    fn generate_trans<T, E>(&self, probe: Self::State, node_trans: T) ->
+        Result<Option<Self::State>, CMError<Self::Error, E>>
+        where T: TransChecker<Self::State, E>
     {
         let start_coord = *node_trans.current();
         if let Some(path_iter) = StraightPathIter::new(&start_coord, &probe) {
@@ -108,7 +111,7 @@ impl<'a> vec_slist::ContextManager for ContextManager<'a> {
                 if self.0[coord.0][coord.1] == b'#' {
                     return Ok(None);
                 }
-                if node_trans.already_visited(&coord, |a, b| Ok(a == b))? {
+                if node_trans.already_visited(&coord).map_err(CMError::RandomTreeProc)? {
                     return Ok(None);
                 }
             }
@@ -118,13 +121,14 @@ impl<'a> vec_slist::ContextManager for ContextManager<'a> {
         }
     }
 
-    fn generate_expand<E>(&mut self, probe: Self::State, node_expander: E) ->
-        Result<(), Self::Error>
-        where E: Expander<Self::State, Self::Error>
+    fn generate_expand<E, EE>(&mut self, probe: Self::State, node_expander: E) ->
+        Result<(), CMError<Self::Error, EE>>
+        where E: Expander<Self::State, EE>
     {
         let coord = *node_expander.current();
         if let Some(path_iter) = StraightPathIter::new(&coord, &probe) {
-            node_expander.expand(path_iter.map(Ok))?;
+            node_expander.expand(path_iter.map(Ok))
+                .map_err(CMError::RandomTreeProc)?;
         }
         Ok(())
     }
