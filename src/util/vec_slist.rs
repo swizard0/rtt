@@ -1,3 +1,5 @@
+use super::seen_cache::SeenCache;
+
 pub trait ContextManager {
     type State;
     type Error;
@@ -6,16 +8,23 @@ pub trait ContextManager {
     fn metric_distance(&mut self, node: &Self::State, probe: &Self::State) ->
         Result<Self::Dist, Self::Error>;
 
-    fn generate_trans<T>(&self, probe: Self::State, node_trans: T) ->
-        Result<Option<Self::State>, Self::Error>
-        where T: TransChecker<Self::State, Self::Error>;
+    fn generate_trans<T, E>(&self, probe: Self::State, node_trans: T) ->
+        Result<Option<Self::State>, CMError<Self::Error, E>>
+        where T: TransChecker<Self::State, E>;
 
-    fn generate_expand<E>(&mut self, probe: Self::State, node_expander: E) ->
-        Result<(), Self::Error>
-        where E: Expander<Self::State, Self::Error>
+    fn generate_expand<E, EE>(&mut self, probe: Self::State, node_expander: E) ->
+        Result<(), CMError<Self::Error, EE>>
+        where E: Expander<Self::State, EE>
     {
         node_expander.expand(Some(Ok(probe)).into_iter())
+            .map_err(CMError::RandomTreeProc)
     }
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum CMError<CME, RTPE> {
+    ContextManager(CME),
+    RandomTreeProc(RTPE),
 }
 
 pub trait Expander<S, E> {
@@ -25,8 +34,7 @@ pub trait Expander<S, E> {
 
 pub trait TransChecker<S, E> {
     fn current(&self) -> &S;
-    fn already_visited<F>(&self, state: &S, states_eq: F) -> Result<bool, E>
-        where F: Fn(&S, &S) -> Result<bool, E>;
+    fn already_visited(&self, state: &S) -> Result<bool, E>;
 }
 
 struct PathNode<S> {
@@ -34,79 +42,104 @@ struct PathNode<S> {
     prev: Option<usize>,
 }
 
-pub struct RandomTree<CM, S> {
+pub struct RandomTree<CM, SC, S> {
     ctx_manager: CM,
+    seen_cache: SC,
     nodes: Vec<PathNode<S>>,
 }
 
-impl<CM, S> RandomTree<CM, S> where CM: ContextManager<State = S> {
-    pub fn new(ctx_manager: CM) -> RandomTree<CM, S> {
+impl<CM, SC, S> RandomTree<CM, SC, S>
+    where CM: ContextManager<State = S>,
+          SC: SeenCache<State = S>,
+{
+    pub fn new(ctx_manager: CM, seen_cache: SC) -> RandomTree<CM, SC, S> {
         RandomTree {
             ctx_manager,
+            seen_cache,
             nodes: Vec::new(),
         }
     }
 }
 
-impl<CM, S> super::super::RandomTree for RandomTree<CM, S> where CM: ContextManager<State = S> {
+#[derive(Clone, PartialEq, Debug)]
+pub enum Error<CME, SCE> {
+    ContextManager(CME),
+    SeenCache(SCE),
+}
+
+impl<CM, SC, S> super::super::RandomTree for RandomTree<CM, SC, S>
+    where CM: ContextManager<State = S>,
+          SC: SeenCache<State = S>,
+{
     type State = S;
-    type Error = CM::Error;
-    type Node = RandomTreeNode<CM, S>;
+    type Error = Error<CM::Error, SC::Error>;
+    type Node = RandomTreeNode<CM, SC, S>;
 
     fn make_root(mut self, state: Self::State) -> Result<Self::Node, Self::Error> {
         self.nodes.clear();
         self.nodes.push(PathNode { state, prev: None, });
         Ok(RandomTreeNode {
             ctx_manager: self.ctx_manager,
+            seen_cache: self.seen_cache,
             nodes: self.nodes,
             node: 0,
         })
     }
 
     fn nearest_node(mut self, state: &Self::State) -> Result<Self::Node, Self::Error> {
-        let distance_to_root =
-            self.ctx_manager.metric_distance(&self.nodes[0].state, state)?;
+        let distance_to_root = self.ctx_manager
+            .metric_distance(&self.nodes[0].state, state)
+            .map_err(Error::ContextManager)?;
         let mut nearest = (distance_to_root, 0);
         for index in 1 .. self.nodes.len() {
-            let distance =
-                self.ctx_manager.metric_distance(&self.nodes[index].state, state)?;
+            let distance = self.ctx_manager
+                .metric_distance(&self.nodes[index].state, state)
+                .map_err(Error::ContextManager)?;
             if distance < nearest.0 {
                 nearest = (distance, index);
             }
         }
         Ok(RandomTreeNode {
             ctx_manager: self.ctx_manager,
+            seen_cache: self.seen_cache,
             nodes: self.nodes,
             node: nearest.1,
         })
     }
 }
 
-pub struct RandomTreeNode<CM, S> {
+pub struct RandomTreeNode<CM, SC, S> {
     ctx_manager: CM,
+    seen_cache: SC,
     nodes: Vec<PathNode<S>>,
     node: usize,
 }
 
-impl<CM, S> RandomTreeNode<CM, S> {
+impl<CM, SC, S> RandomTreeNode<CM, SC, S> {
     pub fn state(&self) -> &S {
         &self.nodes[self.node].state
     }
 }
 
-impl<CM, S> super::super::RandomTreeNode for RandomTreeNode<CM, S> where CM: ContextManager<State = S> {
+impl<CM, SC, S> super::super::RandomTreeNode for RandomTreeNode<CM, SC, S>
+    where CM: ContextManager<State = S>,
+          SC: SeenCache<State = S>,
+{
     type State = S;
-    type Error = CM::Error;
-    type Tree = RandomTree<CM, S>;
+    type Error = Error<CM::Error, SC::Error>;
+    type Tree = RandomTree<CM, SC, S>;
     type Path = RevPathIterator<S>;
 
     fn expand(mut self, state: Self::State) -> Result<Self, Self::Error> {
-        struct NodesExpander<'a, S: 'a> {
+        struct NodesExpander<'a, SC: 'a, S: 'a> {
+            seen_cache: &'a mut SC,
             nodes: &'a mut Vec<PathNode<S>>,
             node: &'a mut usize,
         }
 
-        impl<'a, S, E> Expander<S, E> for NodesExpander<'a, S> {
+        impl<'a, SC, S, E> Expander<S, E> for NodesExpander<'a, SC, S>
+            where SC: SeenCache<State = S, Error = E>
+        {
             fn current(&self) -> &S {
                 &self.nodes[*self.node].state
             }
@@ -116,6 +149,7 @@ impl<CM, S> super::super::RandomTreeNode for RandomTreeNode<CM, S> where CM: Con
             {
                 for maybe_state in states {
                     let state = maybe_state?;
+                    self.seen_cache.remember(&state)?;
                     let next_index = self.nodes.len();
                     self.nodes.push(PathNode { state, prev: Some(*self.node), });
                     *self.node = next_index;
@@ -124,41 +158,64 @@ impl<CM, S> super::super::RandomTreeNode for RandomTreeNode<CM, S> where CM: Con
             }
         }
 
-        self.ctx_manager
-            .generate_expand(state, NodesExpander { nodes: &mut self.nodes, node: &mut self.node, })?;
-        Ok(self)
+        let result = self.ctx_manager
+            .generate_expand(state, NodesExpander {
+                seen_cache: &mut self.seen_cache,
+                nodes: &mut self.nodes,
+                node: &mut self.node,
+            });
+        match result {
+            Ok(()) =>
+                Ok(self),
+            Err(CMError::ContextManager(err)) =>
+                Err(Error::ContextManager(err)),
+            Err(CMError::RandomTreeProc(err)) =>
+                Err(Error::SeenCache(err)),
+        }
     }
 
     fn transition(&self, random_state: Self::State) -> Result<Option<Self::State>, Self::Error> {
-        struct NodesChecker<'a, S: 'a> {
+        struct NodesChecker<'a, SC: 'a, S: 'a> {
+            seen_cache: &'a SC,
             nodes: &'a Vec<PathNode<S>>,
             node: usize,
         }
 
-        impl<'a, S, E> TransChecker<S, E> for NodesChecker<'a, S> {
+        impl<'a, SC, S, E> TransChecker<S, E> for NodesChecker<'a, SC, S>
+            where SC: SeenCache<State = S, Error = E>
+        {
             fn current(&self) -> &S {
                 &self.nodes[self.node].state
             }
 
-            fn already_visited<F>(&self, state: &S, states_eq: F) -> Result<bool, E>
-                where F: Fn(&S, &S) -> Result<bool, E>
-            {
-                for node in self.nodes.iter() {
-                    if states_eq(state, &node.state)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
+            fn already_visited(&self, state: &S) -> Result<bool, E> {
+                let iter = self.nodes
+                    .iter()
+                    .map(|n| Ok(&n.state));
+                self.seen_cache.already_seen(state, iter)
             }
         }
 
-        self.ctx_manager
-            .generate_trans(random_state, NodesChecker { nodes: &self.nodes, node: self.node, })
+        let result = self.ctx_manager
+            .generate_trans(random_state, NodesChecker {
+                seen_cache: &self.seen_cache,
+                nodes: &self.nodes,
+                node: self.node,
+            });
+        match result {
+            Ok(value) =>
+                Ok(value),
+            Err(CMError::ContextManager(err)) =>
+                Err(Error::ContextManager(err)),
+            Err(CMError::RandomTreeProc(err)) =>
+                Err(Error::SeenCache(err)),
+        }
     }
 
     fn into_tree(self) -> Self::Tree {
         RandomTree {
             ctx_manager: self.ctx_manager,
+            seen_cache: self.seen_cache,
             nodes: self.nodes,
         }
     }
