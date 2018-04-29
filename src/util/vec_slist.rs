@@ -50,7 +50,7 @@ pub struct RandomTree<CM, SC, S> {
 
 impl<CM, SC, S> RandomTree<CM, SC, S>
     where CM: ContextManager<State = S>,
-          SC: SeenCache<State = S>,
+          SC: SeenCache<S>,
 {
     pub fn new(ctx_manager: CM, seen_cache: SC) -> RandomTree<CM, SC, S> {
         RandomTree {
@@ -69,7 +69,7 @@ pub enum Error<CME, SCE> {
 
 impl<CM, SC, S> super::super::RandomTree for RandomTree<CM, SC, S>
     where CM: ContextManager<State = S>,
-          SC: SeenCache<State = S>,
+          SC: SeenCache<S>,
 {
     type State = S;
     type Error = Error<CM::Error, SC::Error>;
@@ -123,7 +123,7 @@ impl<CM, SC, S> RandomTreeNode<CM, SC, S> {
 
 impl<CM, SC, S> super::super::RandomTreeNode for RandomTreeNode<CM, SC, S>
     where CM: ContextManager<State = S>,
-          SC: SeenCache<State = S>,
+          SC: SeenCache<S>,
 {
     type State = S;
     type Error = Error<CM::Error, SC::Error>;
@@ -138,7 +138,7 @@ impl<CM, SC, S> super::super::RandomTreeNode for RandomTreeNode<CM, SC, S>
         }
 
         impl<'a, SC, S, E> Expander<S, E> for NodesExpander<'a, SC, S>
-            where SC: SeenCache<State = S, Error = E>
+            where SC: SeenCache<S, Error = E>
         {
             fn current(&self) -> &S {
                 &self.nodes[*self.node].state
@@ -182,7 +182,7 @@ impl<CM, SC, S> super::super::RandomTreeNode for RandomTreeNode<CM, SC, S>
         }
 
         impl<'a, SC, S, E> TransChecker<S, E> for NodesChecker<'a, SC, S>
-            where SC: SeenCache<State = S, Error = E>
+            where SC: SeenCache<S, Error = E>
         {
             fn current(&self) -> &S {
                 &self.nodes[self.node].state

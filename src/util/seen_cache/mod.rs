@@ -1,13 +1,13 @@
 pub mod search;
+pub mod hash_set;
 
-pub trait SeenCache {
-    type State;
+pub trait SeenCache<S> {
     type Error;
 
-    fn remember(&mut self, state: &Self::State) -> Result<(), Self::Error>;
+    fn remember(&mut self, state: &S) -> Result<(), Self::Error>;
 
-    fn already_seen<'a, I>(&self, state: &Self::State, states_iter: I) ->
+    fn already_seen<'a, I>(&self, state: &S, states_iter: I) ->
         Result<bool, Self::Error>
-        where I: Iterator<Item = Result<&'a Self::State, Self::Error>>,
-              Self::State: 'a;
+        where I: Iterator<Item = Result<&'a S, Self::Error>>,
+              S: 'a;
 }
