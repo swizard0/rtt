@@ -5,118 +5,142 @@ pub trait RandomTree {
     type Error;
     type Node: RandomTreeNode<State = Self::State, Error = Self::Error>;
 
-    fn make_root(self, state: Self::State) -> Result<Self::Node, Self::Error>;
+    fn add_root(self, state: Self::State) -> Result<Self::Node, Self::Error>;
+}
+
+pub trait NonEmptyRandomTree {
+    type State;
+    type Error;
+    type Node: RandomTreeNode<State = Self::State, Error = Self::Error>;
+
     fn nearest_node(self, state: &Self::State) -> Result<Self::Node, Self::Error>;
 }
 
 pub trait RandomTreeNode: Sized {
     type State;
     type Error;
-    type Tree: RandomTree<State = Self::State, Error = Self::Error>;
+    type Tree: NonEmptyRandomTree<State = Self::State, Error = Self::Error>;
     type Path;
 
     fn expand(self, state: Self::State) -> Result<Self, Self::Error>;
-    fn transition(&self, random_state: Self::State) -> Result<Option<Self::State>, Self::Error>;
     fn into_tree(self) -> Self::Tree;
     fn into_path(self) -> Self::Path;
 }
 
-pub trait Sampler<RT> where RT: RandomTree {
-    type Error;
-
-    fn sample(&mut self, rtt: &RT) -> Result<Option<RT::State>, Self::Error>;
-}
-
-impl<F, RT, E> Sampler<RT> for F where F: FnMut(&RT) -> Result<Option<RT::State>, E>, RT: RandomTree {
-    type Error = E;
-
-    fn sample(&mut self, rtt: &RT) -> Result<Option<RT::State>, Self::Error> {
-        (self)(rtt)
-    }
-}
-
-pub trait Limiter<RT> where RT: RandomTree {
-    type Error;
-
-    fn limit_exceeded(&mut self, rtt: &RT) -> Result<bool, Self::Error>;
-}
-
-impl<F, RT, E> Limiter<RT> for F where F: FnMut(&RT) -> Result<bool, E>, RT: RandomTree {
-    type Error = E;
-
-    fn limit_exceeded(&mut self, rtt: &RT) -> Result<bool, Self::Error> {
-        (self)(rtt)
-    }
-}
-
-pub trait GoalChecker<RN> where RN: RandomTreeNode {
-    type Error;
-
-    fn goal_reached(&mut self, node: &RN) -> Result<bool, Self::Error>;
-}
-
-impl<F, RN, E> GoalChecker<RN> for F where F: FnMut(&RN) -> Result<bool, E>, RN: RandomTreeNode {
-    type Error = E;
-
-    fn goal_reached(&mut self, node: &RN) -> Result<bool, Self::Error> {
-        (self)(node)
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Error<RTE, SE, LE, GCE> {
-    RandomTree(RTE),
-    Sampler(SE),
-    Limiter(LE),
-    GoalChecker(GCE),
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Outcome<P> {
-    PathPlanned(P),
-    NoPathExists,
-    LimitReached,
-}
-
-pub fn plan<RT, RN, S, L, GC>(
+pub struct Planner<RT> {
     rtt: RT,
-    mut sampler: S,
-    mut limiter: L,
-    mut goal_checker: GC,
-    init: RT::State
-) ->
-    Result<Outcome<RN::Path>, Error<RT::Error, S::Error, L::Error, GC::Error>>
-    where RT: RandomTree<Node = RN>,
-          RN: RandomTreeNode<State = RT::State, Error = RT::Error, Tree = RT>,
-          S: Sampler<RT>,
-          L: Limiter<RT>,
-          GC: GoalChecker<RN>,
-{
-    let mut node = rtt.make_root(init).map_err(Error::RandomTree)?;
-    if goal_checker.goal_reached(&node).map_err(Error::GoalChecker)? {
-        return Ok(Outcome::PathPlanned(node.into_path()));
+}
+
+impl<RT> Planner<RT> {
+    pub fn new(rtt: RT) -> Planner<RT> {
+        Planner { rtt, }
+    }
+}
+
+impl<RT> Planner<RT> where RT: RandomTree {
+    pub fn init(self, init_state: RT::State) -> Result<PlannerNodeExpanded<RT::Node>, RT::Error> {
+        let rtt_node = self.rtt.add_root(init_state)?;
+        Ok(PlannerNodeExpanded { rtt_node, })
+    }
+}
+
+pub struct PlannerNodeExpanded<RN> {
+    rtt_node: RN,
+}
+
+impl<RN> PlannerNodeExpanded<RN> {
+    pub fn rtt_node(&self) -> &RN {
+        &self.rtt_node
+    }
+}
+
+impl<RN> PlannerNodeExpanded<RN> where RN: RandomTreeNode {
+    pub fn prepare_sample(self) -> PlannerReadyToSample<RN::Tree> {
+        PlannerReadyToSample {
+            rtt: self.rtt_node.into_tree(),
+        }
     }
 
-    loop {
-        let rtt = node.into_tree();
-        if limiter.limit_exceeded(&rtt).map_err(Error::Limiter)? {
-            return Ok(Outcome::LimitReached);
-        }
+    pub fn into_path(self) -> RN::Path {
+        self.rtt_node.into_path()
+    }
+}
 
-        if let Some(random_state) = sampler.sample(&rtt).map_err(Error::Sampler)? {
-            node = rtt.nearest_node(&random_state).map_err(Error::RandomTree)?;
-            if let Some(new_state) = node.transition(random_state).map_err(Error::RandomTree)? {
-                node = node.expand(new_state).map_err(Error::RandomTree)?;
-                if goal_checker.goal_reached(&node).map_err(Error::GoalChecker)? {
-                    return Ok(Outcome::PathPlanned(node.into_path()));
-                }
-            }
-        } else {
-            return Ok(Outcome::NoPathExists);
+pub struct PlannerReadyToSample<RT> {
+    rtt: RT,
+}
+
+impl<RT> PlannerReadyToSample<RT> {
+    pub fn rtt(&self) -> &RT {
+        &self.rtt
+    }
+}
+
+impl<RT> PlannerReadyToSample<RT> where RT: NonEmptyRandomTree {
+    pub fn sample(self, sample_state: RT::State) ->
+        Result<PlannerNearestNodeFound<RT::Node, RT::State>, RT::Error>
+    {
+        let rtt_node = self.rtt.nearest_node(&sample_state)?;
+        Ok(PlannerNearestNodeFound { rtt_node, sample_state, })
+    }
+}
+
+pub struct PlannerNearestNodeFound<RN, S> {
+    rtt_node: RN,
+    sample_state: S,
+}
+
+impl<RN, S> PlannerNearestNodeFound<RN, S> {
+    pub fn rtt_node(&self) -> &RN {
+        &self.rtt_node
+    }
+
+    pub fn sample_state(&self) -> &S {
+        &self.sample_state
+    }
+}
+
+impl<RN, S> PlannerNearestNodeFound<RN, S> where RN: RandomTreeNode<State = S> {
+    pub fn no_transition(self) -> PlannerReadyToSample<RN::Tree> {
+        PlannerReadyToSample {
+            rtt: self.rtt_node.into_tree(),
+        }
+    }
+
+    pub fn start_transition(self) -> PlannerTransStateWait<RN, RN::State> {
+        PlannerTransStateWait {
+            rtt_node: self.rtt_node,
+            final_state: self.sample_state,
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
+pub struct PlannerTransStateWait<RN, S> {
+    rtt_node: RN,
+    final_state: S,
+}
+
+impl<RN, S> PlannerTransStateWait<RN, S> {
+    pub fn rtt_node(&self) -> &RN {
+        &self.rtt_node
+    }
+
+    pub fn final_state(&self) -> &S {
+        &self.final_state
+    }
+}
+
+impl<RN, S> PlannerTransStateWait<RN, S> where RN: RandomTreeNode<State = S> {
+    pub fn finish(self) -> Result<PlannerNodeExpanded<RN>, RN::Error> {
+        Ok(PlannerNodeExpanded {
+            rtt_node: self.rtt_node.expand(self.final_state)?,
+        })
+    }
+
+    pub fn intermediate_trans(self, trans_state: RN::State) -> Result<PlannerTransStateWait<RN, S>, RN::Error> {
+        Ok(PlannerTransStateWait {
+            rtt_node: self.rtt_node.expand(trans_state)?,
+            final_state: self.final_state,
+        })
+    }
 }
