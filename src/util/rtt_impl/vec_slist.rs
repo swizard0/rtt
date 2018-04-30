@@ -25,7 +25,7 @@ impl<S, NLL> RandomTree<S, NLL> {
     }
 }
 
-impl<S, NLL> super::super::RandomTree for RandomTree<S, NLL> where NLL: NearestNodeLocator<S> {
+impl<S, NLL> super::super::super::RandomTree for RandomTree<S, NLL> where NLL: NearestNodeLocator<S> {
     type State = S;
     type Error = NLL::Error;
     type Node = RandomTreeNode<S, NLL>;
@@ -46,7 +46,7 @@ pub struct NonEmptyRandomTree<S, NLL> {
     nodes: Vec<PathNode<S>>,
 }
 
-impl<S, NLL> super::super::NonEmptyRandomTree for NonEmptyRandomTree<S, NLL> where NLL: NearestNodeLocator<S> {
+impl<S, NLL> super::super::super::NonEmptyRandomTree for NonEmptyRandomTree<S, NLL> where NLL: NearestNodeLocator<S> {
     type State = S;
     type Error = NLL::Error;
     type Node = RandomTreeNode<S, NLL>;
@@ -93,7 +93,7 @@ impl<S, NLL> RandomTreeNode<S, NLL> {
     }
 }
 
-impl<S, NLL> super::super::RandomTreeNode for RandomTreeNode<S, NLL> where NLL: NearestNodeLocator<S> {
+impl<S, NLL> super::super::super::RandomTreeNode for RandomTreeNode<S, NLL> where NLL: NearestNodeLocator<S> {
     type State = S;
     type Error = NLL::Error;
     type Tree = NonEmptyRandomTree<S, NLL>;
