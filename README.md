@@ -19,5 +19,23 @@ Theory:
 Try the [example](https://github.com/swizard0/rtt/blob/master/examples/rect_maze.rs) yourself:
 
 ```
-cargo run --example rect_maze
+% cargo run --example rect_maze
+
+Maze of 15 rows and 24 cols, start: (1, 3), finish: (8, 2)
+Path planned in 2707 iterations:
+###############
+#  ++  #  ++++##########
+#   +  #  +  +++++     #
+#   +  #  +   ###+ #####
+#   +++#  +   #  +     #
+#     +++++   #  +     #
+#      #      #  +     #
+###############  +     #
+#++    #     +++++     #
+#+     #   +++##########
+#+++   #   +  #
+#  +   #++++  #
+#  +   #+     #
+#  ++++++     #
+###############
 ```
