@@ -1,35 +1,5 @@
 // pub mod util;
 
-// pub trait RandomTree {
-//     type State;
-//     type Error;
-//     type Node: RandomTreeNode<State = Self::State, Error = Self::Error>;
-
-//     fn add_root(self, state: Self::State) -> Result<Self::Node, Self::Error>;
-// }
-
-// pub trait NonEmptyRandomTree {
-//     type State;
-//     type Error;
-//     type Node: RandomTreeNode<State = Self::State, Error = Self::Error>;
-
-//     fn nearest_node(self, state: &Self::State) -> Result<Self::Node, Self::Error>;
-// }
-
-// pub trait RandomTreeNode: Sized {
-//     type State;
-//     type Error;
-//     type Tree: NonEmptyRandomTree<State = Self::State, Error = Self::Error>;
-//     type Path;
-
-//     fn expand(self, state: Self::State) -> Result<Self, Self::Error>;
-//     fn into_tree(self) -> Self::Tree;
-//     fn into_path(self) -> Self::Path;
-// }
-
-
-// -----
-
 // Planner
 
 pub struct Planner<RT> {
@@ -150,10 +120,6 @@ impl<RT, F, TS, E> TransSample<RT> for F where F: FnOnce(RT) -> Result<TS, E> {
 }
 
 impl<RT> PlannerReadyToSample<RT> {
-    pub fn rtt(&self) -> &RT {
-        &self.rtt
-    }
-
     pub fn sample<TR>(self, trans: TR) ->
         Result<PlannerSamplePicked<TR::RttWithSample>, TR::Error>
         where TR: TransSample<RT>
@@ -261,50 +227,88 @@ impl<RNS> PlannerNearestNodeFound<RNS> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// -----
+    #[test]
+    fn skeleton() {
 
-// impl<RN, S> PlannerNearestNodeFound<RN, S> where RN: RandomTreeNode<State = S> {
-//     pub fn no_transition(self) -> PlannerReadyToSample<RN::Tree> {
-//         PlannerReadyToSample {
-//             rtt: self.rtt_node.into_tree(),
-//         }
-//     }
+        #[derive(PartialEq, Debug)]
+        enum Step {
+            EmptyTree,
+            NodesCount(usize),
+            SamplePrepared(usize),
+            Sample(usize),
+            SampleNearest(usize),
+            Path,
+        }
 
-//     pub fn start_transition(self) -> PlannerTransStateWait<RN, RN::State> {
-//         PlannerTransStateWait {
-//             rtt_node: self.rtt_node,
-//             final_state: self.sample_state,
-//         }
-//     }
-// }
+        let planner = Planner::new(Step::EmptyTree);
 
-// pub struct PlannerTransStateWait<RN, S> {
-//     rtt_node: RN,
-//     final_state: S,
-// }
+        let mut planner_node = planner.add_root(|s| {
+            assert_eq!(s, Step::EmptyTree);
+            Ok::<_, ()>(Step::NodesCount(1))
+        }).unwrap();
 
-// impl<RN, S> PlannerTransStateWait<RN, S> {
-//     pub fn rtt_node(&self) -> &RN {
-//         &self.rtt_node
-//     }
+        loop {
+            match planner_node.rtt_node() {
+                &Step::NodesCount(10) =>
+                    break,
+                &Step::NodesCount(..) =>
+                    (),
+                other =>
+                    panic!("Invalid state on limit step: {:?}", other),
+            }
 
-//     pub fn final_state(&self) -> &S {
-//         &self.final_state
-//     }
-// }
+            let mut planner_sample = planner_node.prepare_sample(|s| {
+                if let Step::NodesCount(count) = s {
+                    Ok::<_, ()>(Step::SamplePrepared(count))
+                } else {
+                    panic!("Invalid state on prepare sample step: {:?}", s)
+                }
+            }).unwrap();
 
-// impl<RN, S> PlannerTransStateWait<RN, S> where RN: RandomTreeNode<State = S> {
-//     pub fn finish(self) -> Result<PlannerNodeExpanded<RN>, RN::Error> {
-//         Ok(PlannerNodeExpanded {
-//             rtt_node: self.rtt_node.expand(self.final_state)?,
-//         })
-//     }
+            loop {
+                let planner_pick = planner_sample.sample(|s| {
+                    if let Step::SamplePrepared(count) = s {
+                        Ok::<_, ()>(Step::Sample(count + 1))
+                    } else {
+                        panic!("Invalid state on sample step: {:?}", s)
+                    }
+                }).unwrap();
 
-//     pub fn intermediate_trans(self, trans_state: RN::State) -> Result<PlannerTransStateWait<RN, S>, RN::Error> {
-//         Ok(PlannerTransStateWait {
-//             rtt_node: self.rtt_node.expand(trans_state)?,
-//             final_state: self.final_state,
-//         })
-//     }
-// }
+                let planner_nearest = planner_pick.nearest_node(|s| {
+                    if let Step::Sample(count) = s {
+                        Ok::<_, ()>(Step::SampleNearest(count))
+                    } else {
+                        panic!("Invalid state on nearest node step: {:?}", s)
+                    }
+                }).unwrap();
+
+                let value = if let &Step::SampleNearest(value) = planner_nearest.rtts_node() {
+                    value
+                } else {
+                    panic!("Invalid on transition step: {:?}", planner_nearest.rtts_node())
+                };
+
+                if value % 2 != 0 {
+                    planner_sample = planner_nearest.no_transition(|_| {
+                        Ok::<_, ()>(Step::SamplePrepared(value))
+                    }).unwrap();
+                } else {
+                    planner_node = planner_nearest.transition(|_| {
+                        Ok::<_, ()>(Step::NodesCount(value))
+                    }).unwrap();
+                    break;
+                }
+            }
+        }
+
+        let path = planner_node.into_path(|s| {
+            assert_eq!(s, Step::NodesCount(10));
+            Ok::<_, ()>(Step::Path)
+        }).unwrap();
+        assert_eq!(path, Step::Path);
+    }
+}
