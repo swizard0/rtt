@@ -78,7 +78,8 @@ fn main() {
                     maze[coord.0][coord.1] == b'#' || visited.contains(&coord)
                 });
                 if !blocked {
-                    planner_node = planner_closest.transition(|rtts_node| perform_move(rtts_node, path_iter, &finish)).unwrap();
+                    planner_node =
+                        planner_closest.transition(|rtts_node| perform_move(rtts_node, path_iter, &finish, &mut visited)).unwrap();
                     break;
                 }
             }
@@ -143,7 +144,8 @@ fn sample_again(rtts_node: (RandomTree<Coord>, Coord, NodeRef)) -> Result<Random
 fn perform_move(
     (mut rtt, _sample, mut node_ref): (RandomTree<Coord>, Coord, NodeRef),
     path_iter: StraightPathIter,
-    finish: &Coord
+    finish: &Coord,
+    visited: &mut HashSet<Coord>,
 ) ->
     Result<RttNodeFocus, ()>
 {
@@ -154,6 +156,7 @@ fn perform_move(
             goal_reached = true;
             break;
         }
+        visited.insert(coord);
     }
     RttNodeFocus::make_ok(rtt, node_ref, goal_reached)
 }
