@@ -16,7 +16,7 @@ Theory:
 
 Several useful data structures and helpers are available in `rtt::util` module for your convenience, such as:
 - [rtt::util::rtt::vec_slist](src/util/rtt/vec_slist.rs): single-linked tree implemented over `Vec`
-- `rtt::util::no_err`(src/util/mod.rs): simple wrapper for `Result<T, !>` type
+- [rtt::util::no_err](src/util/mod.rs): simple wrapper for `Result<T, !>` type
 
 ## Example usage
 
