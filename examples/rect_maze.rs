@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use rand::Rng;
 
 use rtt::util::rtt::vec_slist::{EmptyRandomTree, RandomTree, NodeRef};
+use rtt::util::no_err;
 
 type Map<'a> = &'a [&'a [u8]];
 
@@ -44,19 +45,17 @@ fn main() {
         let rtt = empty_rtt.add_root(start);
         let root_ref = rtt.root();
         visited.insert(start);
-        RttNodeFocus::make_ok(rtt, root_ref, false)
+        no_err(RttNodeFocus { rtt, node_ref: root_ref, goal_reached: false, })
     }).unwrap();
 
     loop {
         if planner_node.rtt_node().goal_reached {
-            rev_path = planner_node.into_path(|focus: RttNodeFocus| {
-                Ok::<_, ()>(focus.rtt.into_path(focus.node_ref))
-            }).unwrap();
+            rev_path = planner_node.into_path(|focus: RttNodeFocus| no_err(focus.rtt.into_path(focus.node_ref))).unwrap();
             break;
         }
 
         let mut planner_sample =
-            planner_node.prepare_sample(|focus: RttNodeFocus| Ok::<_, ()>(focus.rtt)).unwrap();
+            planner_node.prepare_sample(|focus: RttNodeFocus| no_err(focus.rtt)).unwrap();
 
         loop {
             if iters >= 10000 {
@@ -68,12 +67,14 @@ fn main() {
             let row = rng.gen_range(0, height);
             let col = rng.gen_range(0, width);
 
-            let planner_pick = planner_sample.sample(|rtt| {
-                Ok::<_, ()>((rtt, (row, col)))
-            }).unwrap();
-
+            let planner_pick = planner_sample.sample(|rtt| no_err((rtt, (row, col)))).unwrap();
             let planner_closest = planner_pick.nearest_node(locate_closest).unwrap();
-            if let Some(path_iter) = build_route(planner_closest.rtts_node()) {
+
+            let route = {
+                let &RttTrans { ref rtt, sample: ref dst, ref closest_node_ref, } = planner_closest.rtts_node();
+                StraightPathIter::new(rtt.get_state(closest_node_ref), dst)
+            };
+            if let Some(path_iter) = route {
                 let blocked = path_iter.clone().any(|coord| {
                     maze[coord.0][coord.1] == b'#' || visited.contains(&coord)
                 });
@@ -83,7 +84,7 @@ fn main() {
                     break;
                 }
             }
-            planner_sample = planner_closest.no_transition(sample_again).unwrap();
+            planner_sample = planner_closest.no_transition(|trans: RttTrans| no_err(trans.rtt)).unwrap();
         }
     }
 
@@ -105,18 +106,17 @@ struct RttNodeFocus {
     goal_reached: bool,
 }
 
-impl RttNodeFocus {
-    fn make_ok(rtt: RandomTree<Coord>, node_ref: NodeRef, goal_reached: bool) -> Result<RttNodeFocus, ()> {
-        Ok(RttNodeFocus { rtt, node_ref, goal_reached, })
-    }
+struct RttTrans {
+    rtt: RandomTree<Coord>,
+    sample: Coord,
+    closest_node_ref: NodeRef,
 }
 
-fn locate_closest((rtt, sample): (RandomTree<Coord>, Coord)) -> Result<(RandomTree<Coord>, Coord, NodeRef), ()> {
+fn locate_closest((rtt, sample): (RandomTree<Coord>, Coord)) -> Result<RttTrans, !> {
     fn sq_dist(coord_a: &Coord, coord_b: &Coord) -> usize {
         (((coord_a.0 as isize - coord_b.0 as isize) * (coord_a.0 as isize - coord_b.0 as isize)) +
          ((coord_a.1 as isize - coord_b.1 as isize) * (coord_a.1 as isize - coord_b.1 as isize))) as usize
     }
-
     let mut closest;
     {
         let states = rtt.states();
@@ -128,26 +128,16 @@ fn locate_closest((rtt, sample): (RandomTree<Coord>, Coord)) -> Result<(RandomTr
             }
         }
     }
-
-    Ok((rtt, sample, closest.0))
-}
-
-fn build_route(&(ref rtt, ref dst, ref closest_node_ref): &(RandomTree<Coord>, Coord, NodeRef)) -> Option<StraightPathIter> {
-    let src = rtt.get_state(closest_node_ref);
-    StraightPathIter::new(src, dst)
-}
-
-fn sample_again(rtts_node: (RandomTree<Coord>, Coord, NodeRef)) -> Result<RandomTree<Coord>, ()> {
-    Ok(rtts_node.0)
+    no_err(RttTrans { rtt, sample, closest_node_ref: closest.0, })
 }
 
 fn perform_move(
-    (mut rtt, _sample, mut node_ref): (RandomTree<Coord>, Coord, NodeRef),
+    RttTrans { mut rtt, closest_node_ref: mut node_ref, .. }: RttTrans,
     path_iter: StraightPathIter,
     finish: &Coord,
     visited: &mut HashSet<Coord>,
 ) ->
-    Result<RttNodeFocus, ()>
+    Result<RttNodeFocus, !>
 {
     let mut goal_reached = false;
     for coord in path_iter {
@@ -158,7 +148,7 @@ fn perform_move(
         }
         visited.insert(coord);
     }
-    RttNodeFocus::make_ok(rtt, node_ref, goal_reached)
+    no_err(RttNodeFocus { rtt, node_ref, goal_reached, })
 }
 
 #[derive(Clone)]
