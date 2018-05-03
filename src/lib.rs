@@ -134,17 +134,17 @@ pub struct PlannerReadyToSample<RT> {
 }
 
 pub trait TransSample<RT> {
-    type RttNodeFocus;
+    type RttWithSample;
     type Error;
 
-    fn sample(self, rtt: RT) -> Result<Self::RttNodeFocus, Self::Error>;
+    fn sample(self, rtt: RT) -> Result<Self::RttWithSample, Self::Error>;
 }
 
-impl<RT, F, NF, E> TransSample<RT> for F where F: FnOnce(RT) -> Result<NF, E> {
-    type RttNodeFocus = NF;
+impl<RT, F, TS, E> TransSample<RT> for F where F: FnOnce(RT) -> Result<TS, E> {
+    type RttWithSample = TS;
     type Error = E;
 
-    fn sample(self, rtt: RT) -> Result<Self::RttNodeFocus, Self::Error> {
+    fn sample(self, rtt: RT) -> Result<Self::RttWithSample, Self::Error> {
         (self)(rtt)
     }
 }
@@ -155,52 +155,114 @@ impl<RT> PlannerReadyToSample<RT> {
     }
 
     pub fn sample<TR>(self, trans: TR) ->
-        Result<PlannerNearestNodeFound<TR::RttNodeFocus>, TR::Error>
+        Result<PlannerSamplePicked<TR::RttWithSample>, TR::Error>
         where TR: TransSample<RT>
     {
+        Ok(PlannerSamplePicked {
+            rtts: trans.sample(self.rtt)?,
+        })
+    }
+}
+
+// PlannerSamplePicked
+
+pub struct PlannerSamplePicked<RTS> {
+    rtts: RTS,
+}
+
+pub trait TransNearestNode<RTS> {
+    type RttNodeFocusWithSample;
+    type Error;
+
+    fn nearest_node(self, rtts: RTS) -> Result<Self::RttNodeFocusWithSample, Self::Error>;
+}
+
+impl<RTS, F, RNS, E> TransNearestNode<RTS> for F where F: FnOnce(RTS) -> Result<RNS, E> {
+    type RttNodeFocusWithSample = RNS;
+    type Error = E;
+
+    fn nearest_node(self, rtts: RTS) -> Result<Self::RttNodeFocusWithSample, Self::Error> {
+        (self)(rtts)
+    }
+}
+
+impl<RTS> PlannerSamplePicked<RTS> {
+    pub fn rtts(&self) -> &RTS {
+        &self.rtts
+    }
+
+    pub fn nearest_node<TR>(self, trans: TR) ->
+        Result<PlannerNearestNodeFound<TR::RttNodeFocusWithSample>, TR::Error>
+        where TR: TransNearestNode<RTS>
+    {
         Ok(PlannerNearestNodeFound {
-            rtt_node: trans.sample(self.rtt)?,
+            rtts_node: trans.nearest_node(self.rtts)?,
         })
     }
 }
 
 // PlannerNearestNodeFound
 
-pub struct PlannerNearestNodeFound<RN> {
-    rtt_node: RN,
+pub struct PlannerNearestNodeFound<RNS> {
+    rtts_node: RNS,
 }
 
-impl<RN> PlannerNearestNodeFound<RN> {
-    pub fn rtt_node(&self) -> &RN {
-        &self.rtt_node
+pub trait TransNoTransition<RNS> {
+    type Rtt;
+    type Error;
+
+    fn no_transition(self, rtts_node: RNS) -> Result<Self::Rtt, Self::Error>;
+}
+
+impl<RNS, F, RT, E> TransNoTransition<RNS> for F where F: FnOnce(RNS) -> Result<RT, E> {
+    type Rtt = RT;
+    type Error = E;
+
+    fn no_transition(self, rtts_node: RNS) -> Result<Self::Rtt, Self::Error> {
+        (self)(rtts_node)
     }
 }
 
+pub trait TransTransition<RNS> {
+    type RttNodeFocus;
+    type Error;
+
+    fn transition(self, rtts_node: RNS) -> Result<Self::RttNodeFocus, Self::Error>;
+}
+
+impl<RNS, F, RN, E> TransTransition<RNS> for F where F: FnOnce(RNS) -> Result<RN, E> {
+    type RttNodeFocus = RN;
+    type Error = E;
+
+    fn transition(self, rtts_node: RNS) -> Result<Self::RttNodeFocus, Self::Error> {
+        (self)(rtts_node)
+    }
+}
+
+impl<RNS> PlannerNearestNodeFound<RNS> {
+    pub fn rtts_node(&self) -> &RNS {
+        &self.rtts_node
+    }
+
+    pub fn no_transition<TR>(self, trans: TR) -> Result<PlannerReadyToSample<TR::Rtt>, TR::Error>
+        where TR: TransNoTransition<RNS>
+    {
+        Ok(PlannerReadyToSample {
+            rtt: trans.no_transition(self.rtts_node)?,
+        })
+    }
+
+    pub fn transition<TR>(self, trans: TR) -> Result<PlannerNodeExpanded<TR::RttNodeFocus>, TR::Error>
+        where TR: TransTransition<RNS>
+    {
+        Ok(PlannerNodeExpanded {
+            rtt_node: trans.transition(self.rtts_node)?,
+        })
+    }
+}
+
+
 // -----
-
-// impl<RT> PlannerReadyToSample<RT> where RT: NonEmptyRandomTree {
-//     pub fn sample(self, sample_state: RT::State) ->
-//         Result<PlannerNearestNodeFound<RT::Node, RT::State>, RT::Error>
-//     {
-//         let rtt_node = self.rtt.nearest_node(&sample_state)?;
-//         Ok(PlannerNearestNodeFound { rtt_node, sample_state, })
-//     }
-// }
-
-// pub struct PlannerNearestNodeFound<RN, S> {
-//     rtt_node: RN,
-//     sample_state: S,
-// }
-
-// impl<RN, S> PlannerNearestNodeFound<RN, S> {
-//     pub fn rtt_node(&self) -> &RN {
-//         &self.rtt_node
-//     }
-
-//     pub fn sample_state(&self) -> &S {
-//         &self.sample_state
-//     }
-// }
 
 // impl<RN, S> PlannerNearestNodeFound<RN, S> where RN: RandomTreeNode<State = S> {
 //     pub fn no_transition(self) -> PlannerReadyToSample<RN::Tree> {
