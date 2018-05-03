@@ -4,7 +4,7 @@ extern crate rand;
 use std::collections::HashSet;
 use rand::Rng;
 
-use rtt::util::rtt_impl::vec_slist::{self, NearestNodeLocator};
+use rtt::util::rtt::vec_slist::{EmptyRandomTree, RandomTree, NodeRef};
 
 type Map<'a> = &'a [&'a [u8]];
 
@@ -31,14 +31,25 @@ fn main() {
     let height = maze.len();
 
     let mut rng = rand::thread_rng();
-    // let mut visited = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut iters = 0;
 
-    let rtt = vec_slist::RandomTree::new(Locator);
+    let rtt: EmptyRandomTree<State> =
+        EmptyRandomTree::new();
     let planner = rtt::Planner::new(rtt);
-    let mut planner_node = planner.init(start).unwrap();
-    for iters in 0 .. 10000 {
-        if planner_node.rtt_node().state() == &finish {
-            let rev_path = planner_node.into_path();
+
+    let mut planner_node = planner.add_root(|empty_rtt: EmptyRandomTree<_>| {
+        let rtt = empty_rtt.add_root(start);
+        let root_ref = rtt.root();
+        visited.insert(start);
+        RttNodeFocus::make_ok(rtt, root_ref, false)
+    }).unwrap();
+
+    loop {
+        if planner_node.rtt_node().goal_reached {
+            let rev_path = planner_node.into_path(|focus: RttNodeFocus| {
+                Ok::<_, ()>(focus.rtt.into_path(focus.node_ref))
+            }).unwrap();
             let path: Vec<_> = rev_path.collect();
             println!("Path planned in {} iterations:", iters);
             for item in cells_iter(maze) {
@@ -52,101 +63,102 @@ fn main() {
             return;
         }
 
-        let mut planner_sample = planner_node.prepare_sample();
+        let mut planner_sample =
+            planner_node.prepare_sample(|focus: RttNodeFocus| Ok::<_, ()>(focus.rtt)).unwrap();
+
         loop {
+            if iters >= 10000 {
+                println!("Planning limit reached");
+                return;
+            }
+
+            iters += 1;
             let row = rng.gen_range(0, height);
             let col = rng.gen_range(0, width);
 
-            let planner_nearest = planner_sample.sample((row, col)).unwrap();
-            if let Some(path_iter) = StraightPathIter::new(planner_nearest.rtt_node().state(), planner_nearest.sample_state()) {
-                let mut planner_expand = planner_nearest.start_transition();
-                for coord in path_iter {
-                    planner_expand = planner_expand.intermediate_trans(coord).unwrap();
+            let planner_pick = planner_sample.sample(|rtt| {
+                Ok::<_, ()>((rtt, (col, row)))
+            }).unwrap();
+
+            let planner_closest = planner_pick.nearest_node(locate_closest).unwrap();
+            if let Some(path_iter) = build_route(planner_closest.rtts_node()) {
+                let blocked = path_iter.clone().any(|coord| {
+                    maze[coord.0][coord.1] == b'#' || visited.contains(&coord)
+                });
+                if !blocked {
+                    planner_node = planner_closest.transition(|rtts_node| perform_move(rtts_node, path_iter, &finish)).unwrap();
+                    break;
                 }
-                planner_node = planner_expand.finish().unwrap();
-                break;
-            } else {
-                planner_sample = planner_nearest.no_transition();
             }
+            planner_sample = planner_closest.no_transition(sample_again).unwrap();
         }
     }
-
-    println!("Planning limit reached");
 }
 
 type Coord = (usize, usize);
 type State = Coord;
 
-#[derive(PartialEq, PartialOrd)]
-enum Dist {
-    Straight(usize),
-    NotStraight,
+struct RttNodeFocus {
+    rtt: RandomTree<State>,
+    node_ref: NodeRef,
+    goal_reached: bool,
 }
 
-struct Locator;
-
-impl vec_slist::NearestNodeLocator<State> for Locator {
-    type Error = ();
-
-    fn locate_nearest<'a, SI, I>(&mut self, state: &State, rtt_root: SI, rtt_states: I) ->
-        Result<&'a SI, Self::Error>
-        where I: Iterator<Item = SI>, SI: AsRef<State>
-    {
-
-        unimplemented!()
+impl RttNodeFocus {
+    fn make_ok(rtt: RandomTree<State>, node_ref: NodeRef, goal_reached: bool) -> Result<RttNodeFocus, ()> {
+        Ok(RttNodeFocus { rtt, node_ref, goal_reached, })
     }
 }
 
-// struct ContextManager<'a>(Map<'a>);
+fn locate_closest((rtt, sample): (RandomTree<State>, State)) -> Result<(RandomTree<State>, State, NodeRef), ()> {
+    fn sq_dist(coord_a: &Coord, coord_b: &Coord) -> usize {
+        (((coord_a.0 as isize - coord_b.0 as isize) * (coord_a.0 as isize - coord_b.0 as isize)) +
+         ((coord_a.1 as isize - coord_b.1 as isize) * (coord_a.1 as isize - coord_b.1 as isize))) as usize
+    }
 
-// impl<'a> vec_slist::ContextManager for ContextManager<'a> {
-//     type State = State;
-//     type Error = ();
-//     type Dist = Dist;
+    let mut closest;
+    {
+        let states = rtt.states();
+        closest = (states.root.0, sq_dist(states.root.1, &sample));
+        for (node_ref, coord) in states.children {
+            let dist = sq_dist(coord, &sample);
+            if dist < closest.1 {
+                closest = (node_ref, dist);
+            }
+        }
+    }
 
-//     fn metric_distance(&mut self, node: &Self::State, probe: &Self::State) ->
-//         Result<Self::Dist, Self::Error>
-//     {
-//         Ok(if let Some(path_iter) = StraightPathIter::new(node, probe) {
-//             Dist::Straight(path_iter.count())
-//         } else {
-//             Dist::NotStraight
-//         })
-//     }
+    Ok((rtt, sample, closest.0))
+}
 
-//     fn generate_trans<T, E>(&self, probe: Self::State, node_trans: T) ->
-//         Result<Option<Self::State>, CMError<Self::Error, E>>
-//         where T: TransChecker<Self::State, E>
-//     {
-//         let start_coord = *node_trans.current();
-//         if let Some(path_iter) = StraightPathIter::new(&start_coord, &probe) {
-//             for coord in path_iter {
-//                 if self.0[coord.0][coord.1] == b'#' {
-//                     return Ok(None);
-//                 }
-//                 if node_trans.already_visited(&coord).map_err(CMError::RandomTreeProc)? {
-//                     return Ok(None);
-//                 }
-//             }
-//             Ok(Some(probe))
-//         } else {
-//             Ok(None)
-//         }
-//     }
+fn build_route(&(ref rtt, ref dst, ref closest_node_ref): &(RandomTree<State>, State, NodeRef)) -> Option<StraightPathIter> {
+    let src = rtt.get_state(closest_node_ref);
+    StraightPathIter::new(src, dst)
+}
 
-//     fn generate_expand<E, EE>(&mut self, probe: Self::State, node_expander: E) ->
-//         Result<(), CMError<Self::Error, EE>>
-//         where E: Expander<Self::State, EE>
-//     {
-//         let coord = *node_expander.current();
-//         if let Some(path_iter) = StraightPathIter::new(&coord, &probe) {
-//             node_expander.expand(path_iter.map(Ok))
-//                 .map_err(CMError::RandomTreeProc)?;
-//         }
-//         Ok(())
-//     }
-// }
+fn sample_again(rtts_node: (RandomTree<State>, State, NodeRef)) -> Result<RandomTree<State>, ()> {
+    Ok(rtts_node.0)
+}
 
+fn perform_move(
+    (mut rtt, _sample, mut node_ref): (RandomTree<State>, State, NodeRef),
+    path_iter: StraightPathIter,
+    finish: &Coord
+) ->
+    Result<RttNodeFocus, ()>
+{
+    let mut goal_reached = false;
+    for coord in path_iter {
+        node_ref = rtt.expand(node_ref, coord);
+        if &coord == finish {
+            goal_reached = true;
+            break;
+        }
+    }
+    RttNodeFocus::make_ok(rtt, node_ref, goal_reached)
+}
+
+#[derive(Clone)]
 struct StraightPathIter {
     source: Coord,
     target: Coord,
