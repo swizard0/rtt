@@ -48,16 +48,24 @@ impl<S> RandomTree<S> {
         }
     }
 
-    pub fn get_state(&self, NodeRef(node_index): NodeRef) -> &S {
+    pub fn get_state(&self, &NodeRef(node_index): &NodeRef) -> &S {
         &self.nodes[node_index].state
     }
 
-    pub fn states(&self) -> RandomTreeStatesIter<S> {
-        RandomTreeStatesIter {
-            nodes: &self.nodes,
-            index: 0,
+    pub fn states(&self) -> RandomTreeStates<S> {
+        RandomTreeStates {
+            root: (NodeRef(0), &self.nodes[0].state),
+            children: RandomTreeStatesIter {
+                nodes: &self.nodes,
+                index: 1,
+            }
         }
     }
+}
+
+pub struct RandomTreeStates<'a, S: 'a> {
+    pub root: (NodeRef, &'a S),
+    pub children: RandomTreeStatesIter<'a, S>,
 }
 
 pub struct RandomTreeStatesIter<'a, S: 'a> {
