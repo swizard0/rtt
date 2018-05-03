@@ -1,6 +1,7 @@
 extern crate rtt;
 extern crate rand;
 
+use std::cmp::min;
 use std::collections::HashSet;
 use rand::Rng;
 
@@ -25,20 +26,19 @@ fn main() {
           b"#      #      #",
           b"#             #",
           b"###############"];
-    let start = find_cell(b'*', maze).unwrap();
-    let finish = find_cell(b'@', maze).unwrap();
     let width = maze.iter().map(|line| line.len()).max().unwrap();
     let height = maze.len();
+    let start = find_cell(b'*', maze, height, width).unwrap();
+    let finish = find_cell(b'@', maze, height, width).unwrap();
 
     println!("Maze of {} rows and {} cols, start: {:?}, finish: {:?}", height, width, start, finish);
 
     let mut rng = rand::thread_rng();
     let mut visited = HashSet::new();
     let mut iters = 0;
+    let rev_path;
 
-    let rtt: EmptyRandomTree<State> =
-        EmptyRandomTree::new();
-    let planner = rtt::Planner::new(rtt);
+    let planner = rtt::Planner::new(EmptyRandomTree::new());
 
     let mut planner_node = planner.add_root(|empty_rtt: EmptyRandomTree<_>| {
         let rtt = empty_rtt.add_root(start);
@@ -49,20 +49,10 @@ fn main() {
 
     loop {
         if planner_node.rtt_node().goal_reached {
-            let rev_path = planner_node.into_path(|focus: RttNodeFocus| {
+            rev_path = planner_node.into_path(|focus: RttNodeFocus| {
                 Ok::<_, ()>(focus.rtt.into_path(focus.node_ref))
             }).unwrap();
-            let path: Vec<_> = rev_path.collect();
-            println!("Path planned in {} iterations:", iters);
-            for item in cells_iter(maze) {
-                match item {
-                    MapItem::NextRow =>
-                        println!(""),
-                    MapItem::Cell { coord, tile, } =>
-                        print!("{}", if path.contains(&coord) { '+' } else { tile as char }),
-                }
-            }
-            return;
+            break;
         }
 
         let mut planner_sample =
@@ -73,8 +63,8 @@ fn main() {
                 println!("Planning limit reached");
                 return;
             }
-
             iters += 1;
+
             let row = rng.gen_range(0, height);
             let col = rng.gen_range(0, width);
 
@@ -95,24 +85,32 @@ fn main() {
             planner_sample = planner_closest.no_transition(sample_again).unwrap();
         }
     }
+
+    let path: Vec<_> = rev_path.collect();
+    println!("Path planned in {} iterations:", iters);
+    for row in 0 .. height {
+        for col in 0 .. min(width, maze[row].len()) {
+            print!("{}", if path.contains(&(row, col)) { '+' } else { maze[row][col] as char });
+        }
+        println!("");
+    }
 }
 
 type Coord = (usize, usize);
-type State = Coord;
 
 struct RttNodeFocus {
-    rtt: RandomTree<State>,
+    rtt: RandomTree<Coord>,
     node_ref: NodeRef,
     goal_reached: bool,
 }
 
 impl RttNodeFocus {
-    fn make_ok(rtt: RandomTree<State>, node_ref: NodeRef, goal_reached: bool) -> Result<RttNodeFocus, ()> {
+    fn make_ok(rtt: RandomTree<Coord>, node_ref: NodeRef, goal_reached: bool) -> Result<RttNodeFocus, ()> {
         Ok(RttNodeFocus { rtt, node_ref, goal_reached, })
     }
 }
 
-fn locate_closest((rtt, sample): (RandomTree<State>, State)) -> Result<(RandomTree<State>, State, NodeRef), ()> {
+fn locate_closest((rtt, sample): (RandomTree<Coord>, Coord)) -> Result<(RandomTree<Coord>, Coord, NodeRef), ()> {
     fn sq_dist(coord_a: &Coord, coord_b: &Coord) -> usize {
         (((coord_a.0 as isize - coord_b.0 as isize) * (coord_a.0 as isize - coord_b.0 as isize)) +
          ((coord_a.1 as isize - coord_b.1 as isize) * (coord_a.1 as isize - coord_b.1 as isize))) as usize
@@ -133,17 +131,17 @@ fn locate_closest((rtt, sample): (RandomTree<State>, State)) -> Result<(RandomTr
     Ok((rtt, sample, closest.0))
 }
 
-fn build_route(&(ref rtt, ref dst, ref closest_node_ref): &(RandomTree<State>, State, NodeRef)) -> Option<StraightPathIter> {
+fn build_route(&(ref rtt, ref dst, ref closest_node_ref): &(RandomTree<Coord>, Coord, NodeRef)) -> Option<StraightPathIter> {
     let src = rtt.get_state(closest_node_ref);
     StraightPathIter::new(src, dst)
 }
 
-fn sample_again(rtts_node: (RandomTree<State>, State, NodeRef)) -> Result<RandomTree<State>, ()> {
+fn sample_again(rtts_node: (RandomTree<Coord>, Coord, NodeRef)) -> Result<RandomTree<Coord>, ()> {
     Ok(rtts_node.0)
 }
 
 fn perform_move(
-    (mut rtt, _sample, mut node_ref): (RandomTree<State>, State, NodeRef),
+    (mut rtt, _sample, mut node_ref): (RandomTree<Coord>, Coord, NodeRef),
     path_iter: StraightPathIter,
     finish: &Coord
 ) ->
@@ -200,28 +198,13 @@ impl Iterator for StraightPathIter {
     }
 }
 
-enum MapItem {
-    Cell { coord: Coord, tile: u8, },
-    NextRow,
-}
-
-fn cells_iter<'a>(map: Map<'a>) -> Box<Iterator<Item = MapItem> + 'a> {
-    let iter = map.iter()
-        .enumerate()
-        .flat_map(|(row, &line)| {
-            line.iter()
-                .enumerate()
-                .map(move |(col, &tile)| MapItem::Cell { coord: (row, col), tile, })
-                .chain(Some(MapItem::NextRow).into_iter())
-        });
-    Box::new(iter)
-}
-
-fn find_cell<'a>(cell: u8, map: Map<'a>) -> Option<Coord> {
-    cells_iter(map)
-        .filter_map(|item| match item {
-            MapItem::Cell { tile, coord } if tile == cell => Some(coord),
-            _ => None,
-        })
-        .next()
+fn find_cell<'a>(cell: u8, map: Map<'a>, height: usize, width: usize) -> Option<Coord> {
+    for row in 0 .. height {
+        for col in 0 .. min(width, map[row].len()) {
+            if map[row][col] == cell {
+                return Some((row, col));
+            }
+        }
+    }
+    None
 }
