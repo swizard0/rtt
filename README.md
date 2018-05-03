@@ -14,9 +14,13 @@ Theory:
 
 `rtt` is a Rust crate with a very abstract algorithm implementation. Everything outside of raw algorithm (sampling, memory management, nearest node search etc) is left to library user.
 
+Several useful data structures and helpers are available in `rtt::util` module for your convenience, such as:
+- [rtt::util::rtt::vec_slist](src/util/rtt/vec_slist.rs): single-linked tree implemented over `Vec`
+- `rtt::util::no_err`(src/util/mod.rs): simple wrapper for `Result<T, !>` type
+
 ## Example usage
 
-Try the [example](https://github.com/swizard0/rtt/blob/master/examples/rect_maze.rs) yourself:
+Try the [example](examples/rect_maze.rs) yourself:
 
 ```
 % cargo run --example rect_maze
