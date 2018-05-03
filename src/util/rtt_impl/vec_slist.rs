@@ -1,122 +1,83 @@
-pub trait NearestNodeLocator<S> {
-    type Error;
+use std::marker::PhantomData;
 
-    fn locate_nearest<'a, SI, I>(&mut self, state: &S, rtt_root: SI, rtt_states: I) ->
-        Result<&'a SI, Self::Error>
-        where I: Iterator<Item = SI>, SI: AsRef<S>;
-}
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct NodeRef(usize);
 
 struct PathNode<S> {
     state: S,
     prev: Option<usize>,
 }
 
-pub struct RandomTree<S, NNL> {
-    locator: NNL,
-    nodes: Vec<PathNode<S>>,
+pub struct EmptyRandomTree<S> {
+    _marker: PhantomData<S>,
 }
 
-impl<S, NLL> RandomTree<S, NLL> {
-    pub fn new(locator: NLL) -> RandomTree<S, NLL> {
+impl<S> EmptyRandomTree<S> {
+    pub fn new() -> EmptyRandomTree<S> {
+        EmptyRandomTree {
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn add_root(self, state: S) -> RandomTree<S> {
         RandomTree {
-            locator,
-            nodes: Vec::new(),
+            nodes: vec![PathNode { state, prev: None, }],
         }
     }
 }
 
-impl<S, NLL> super::super::super::RandomTree for RandomTree<S, NLL> where NLL: NearestNodeLocator<S> {
-    type State = S;
-    type Error = NLL::Error;
-    type Node = RandomTreeNode<S, NLL>;
-
-    fn add_root(mut self, state: Self::State) -> Result<Self::Node, Self::Error> {
-        self.nodes.clear();
-        self.nodes.push(PathNode { state, prev: None, });
-        Ok(RandomTreeNode {
-            locator: self.locator,
-            nodes: self.nodes,
-            node: 0,
-        })
-    }
-}
-
-pub struct NonEmptyRandomTree<S, NLL> {
-    locator: NLL,
+pub struct RandomTree<S> {
     nodes: Vec<PathNode<S>>,
 }
 
-impl<S, NLL> super::super::super::NonEmptyRandomTree for NonEmptyRandomTree<S, NLL> where NLL: NearestNodeLocator<S> {
-    type State = S;
-    type Error = NLL::Error;
-    type Node = RandomTreeNode<S, NLL>;
-
-    fn nearest_node(mut self, state: &Self::State) -> Result<Self::Node, Self::Error> {
-        let nearest_node_index = {
-            struct Indexed<'a, S: 'a> {
-                state: &'a S,
-                index: usize,
-            }
-
-            impl<'a, S> AsRef<S> for Indexed<'a, S> {
-                fn as_ref(&self) -> &S {
-                    self.state
-                }
-            }
-
-            self.locator.locate_nearest(
-                state,
-                Indexed { state: &self.nodes[0].state, index: 0, },
-                self.nodes[1 ..].iter()
-                    .enumerate()
-                    .map(|(index, n)| Indexed { state: &n.state, index, }),
-            )?.index
-        };
-
-        Ok(RandomTreeNode {
-            locator: self.locator,
-            nodes: self.nodes,
-            node: nearest_node_index,
-        })
+impl<S> RandomTree<S> {
+    pub fn root(&self) -> NodeRef {
+        NodeRef(0)
     }
-}
 
-pub struct RandomTreeNode<S, NLL> {
-    locator: NLL,
-    nodes: Vec<PathNode<S>>,
-    node: usize,
-}
-
-impl<S, NLL> RandomTreeNode<S, NLL> {
-    pub fn state(&self) -> &S {
-        &self.nodes[self.node].state
-    }
-}
-
-impl<S, NLL> super::super::super::RandomTreeNode for RandomTreeNode<S, NLL> where NLL: NearestNodeLocator<S> {
-    type State = S;
-    type Error = NLL::Error;
-    type Tree = NonEmptyRandomTree<S, NLL>;
-    type Path = RevPathIterator<S>;
-
-    fn expand(mut self, state: Self::State) -> Result<Self, Self::Error> {
+    pub fn expand(&mut self, NodeRef(node_index): NodeRef, state: S) -> NodeRef {
         let next_index = self.nodes.len();
-        self.nodes.push(PathNode { state, prev: Some(self.node), });
-        self.node = next_index;
-        Ok(self)
+        self.nodes.push(PathNode { state, prev: Some(node_index), });
+        NodeRef(next_index)
     }
 
-    fn into_tree(self) -> Self::Tree {
-        NonEmptyRandomTree {
-            locator: self.locator,
-            nodes: self.nodes,
-        }
-    }
-
-    fn into_path(self) -> Self::Path {
+    pub fn into_path(self, NodeRef(node_index): NodeRef) -> RevPathIterator<S> {
         RevPathIterator {
             nodes: self.nodes,
-            node: Some(self.node),
+            node: Some(node_index),
+        }
+    }
+
+    pub fn get_state(&self, NodeRef(node_index): NodeRef) -> &S {
+        &self.nodes[node_index].state
+    }
+
+    pub fn states(&self) -> RandomTreeStatesIter<S> {
+        RandomTreeStatesIter {
+            nodes: &self.nodes,
+            index: 0,
+        }
+    }
+}
+
+pub struct RandomTreeStatesIter<'a, S: 'a> {
+    nodes: &'a [PathNode<S>],
+    index: usize,
+}
+
+impl<'a, S> Iterator for RandomTreeStatesIter<'a, S> {
+    type Item = (NodeRef, &'a S);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.nodes.len() {
+            None
+        } else {
+            let item = (
+                NodeRef(self.index),
+                &self.nodes[self.index].state
+            );
+            self.index += 1;
+            Some(item)
         }
     }
 }
