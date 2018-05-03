@@ -30,6 +30,8 @@ fn main() {
     let width = maze.iter().map(|line| line.len()).max().unwrap();
     let height = maze.len();
 
+    println!("Maze of {} rows and {} cols, start: {:?}, finish: {:?}", height, width, start, finish);
+
     let mut rng = rand::thread_rng();
     let mut visited = HashSet::new();
     let mut iters = 0;
@@ -77,7 +79,7 @@ fn main() {
             let col = rng.gen_range(0, width);
 
             let planner_pick = planner_sample.sample(|rtt| {
-                Ok::<_, ()>((rtt, (col, row)))
+                Ok::<_, ()>((rtt, (row, col)))
             }).unwrap();
 
             let planner_closest = planner_pick.nearest_node(locate_closest).unwrap();
