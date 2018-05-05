@@ -48,7 +48,7 @@ impl<S> RandomTree<S> {
         }
     }
 
-    pub fn path_iter<'a>(&'a self, NodeRef(node_index): NodeRef) -> RevPathRefIterator<'a, S> {
+    pub fn path_iter<'a>(&'a self, &NodeRef(node_index): &NodeRef) -> RevPathRefIterator<'a, S> {
         RevPathRefIterator {
             nodes: &self.nodes,
             node: Some(node_index),
