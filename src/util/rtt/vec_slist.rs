@@ -48,6 +48,13 @@ impl<S> RandomTree<S> {
         }
     }
 
+    pub fn path_iter<'a>(&'a self, NodeRef(node_index): NodeRef) -> RevPathRefIterator<'a, S> {
+        RevPathRefIterator {
+            nodes: &self.nodes,
+            node: Some(node_index),
+        }
+    }
+
     pub fn get_state(&self, &NodeRef(node_index): &NodeRef) -> &S {
         &self.nodes[node_index].state
     }
@@ -103,6 +110,25 @@ impl<S> Iterator for RevPathIterator<S> {
             let node = self.nodes.swap_remove(node_index);
             self.node = node.prev;
             Some(node.state)
+        } else {
+            None
+        }
+    }
+}
+
+pub struct RevPathRefIterator<'a, S: 'a> {
+    nodes: &'a [PathNode<S>],
+    node: Option<usize>,
+}
+
+impl<'a, S> Iterator for RevPathRefIterator<'a, S> {
+    type Item = &'a S;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(node_index) = self.node {
+            let node = &self.nodes[node_index];
+            self.node = node.prev;
+            Some(&node.state)
         } else {
             None
         }
