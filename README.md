@@ -4,6 +4,10 @@
 
 Randomized data structure that is designed for a broad class of path planning problems.
 
+Visualizer: [rtt-demo](https://github.com/swizard0/rtt-demo)
+
+![rtt visualizer](https://github.com/swizard0/rtt-demo/blob/master/images/screenshot_00.png "RTT visualizer")
+
 Theory:
 - <http://msl.cs.uiuc.edu/~lavalle/papers/Lav98c.pdf>
 - <http://msl.cs.uiuc.edu/rrt/>
