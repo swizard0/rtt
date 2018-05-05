@@ -103,66 +103,33 @@ pub struct PlannerReadyToSample<RT> {
     rtt: RT,
 }
 
-pub trait TransSample<RT> {
-    type RttWithSample;
+pub trait TransClosestToSample<RT> {
+    type RttClosestNodeToSample;
     type Error;
 
-    fn sample(self, rtt: RT) -> Result<Self::RttWithSample, Self::Error>;
+    fn closest_to_sample(self, rtt: RT) -> Result<Self::RttClosestNodeToSample, Self::Error>;
 }
 
-impl<RT, F, TS, E> TransSample<RT> for F where F: FnOnce(RT) -> Result<TS, E> {
-    type RttWithSample = TS;
+impl<RT, F, RNS, E> TransClosestToSample<RT> for F where F: FnOnce(RT) -> Result<RNS, E> {
+    type RttClosestNodeToSample = RNS;
     type Error = E;
 
-    fn sample(self, rtt: RT) -> Result<Self::RttWithSample, Self::Error> {
+    fn closest_to_sample(self, rtt: RT) -> Result<Self::RttClosestNodeToSample, Self::Error> {
         (self)(rtt)
     }
 }
 
 impl<RT> PlannerReadyToSample<RT> {
-    pub fn sample<TR>(self, trans: TR) ->
-        Result<PlannerSamplePicked<TR::RttWithSample>, TR::Error>
-        where TR: TransSample<RT>
-    {
-        Ok(PlannerSamplePicked {
-            rtts: trans.sample(self.rtt)?,
-        })
-    }
-}
-
-// PlannerSamplePicked
-
-pub struct PlannerSamplePicked<RTS> {
-    rtts: RTS,
-}
-
-pub trait TransNearestNode<RTS> {
-    type RttNodeFocusWithSample;
-    type Error;
-
-    fn nearest_node(self, rtts: RTS) -> Result<Self::RttNodeFocusWithSample, Self::Error>;
-}
-
-impl<RTS, F, RNS, E> TransNearestNode<RTS> for F where F: FnOnce(RTS) -> Result<RNS, E> {
-    type RttNodeFocusWithSample = RNS;
-    type Error = E;
-
-    fn nearest_node(self, rtts: RTS) -> Result<Self::RttNodeFocusWithSample, Self::Error> {
-        (self)(rtts)
-    }
-}
-
-impl<RTS> PlannerSamplePicked<RTS> {
-    pub fn rtts(&self) -> &RTS {
-        &self.rtts
+    pub fn rtt(&self) -> &RT {
+        &self.rtt
     }
 
-    pub fn nearest_node<TR>(self, trans: TR) ->
-        Result<PlannerNearestNodeFound<TR::RttNodeFocusWithSample>, TR::Error>
-        where TR: TransNearestNode<RTS>
+    pub fn closest_to_sample<TR>(self, trans: TR) ->
+        Result<PlannerNearestNodeFound<TR::RttClosestNodeToSample>, TR::Error>
+        where TR: TransClosestToSample<RT>
     {
         Ok(PlannerNearestNodeFound {
-            rtts_node: trans.nearest_node(self.rtts)?,
+            rtts_node: trans.closest_to_sample(self.rtt)?,
         })
     }
 }
@@ -239,7 +206,6 @@ mod tests {
             EmptyTree,
             NodesCount(usize),
             SamplePrepared(usize),
-            Sample(usize),
             SampleNearest(usize),
             Path,
         }
@@ -270,20 +236,14 @@ mod tests {
             }).unwrap();
 
             loop {
-                let planner_pick = planner_sample.sample(|s| {
-                    if let Step::SamplePrepared(count) = s {
-                        Ok::<_, ()>(Step::Sample(count + 1))
-                    } else {
-                        panic!("Invalid state on sample step: {:?}", s)
-                    }
-                }).unwrap();
+                let next_sample = if let &Step::SamplePrepared(count) = planner_sample.rtt() {
+                    count + 1
+                } else {
+                    panic!("Invalid state on sample picking step");
+                };
 
-                let planner_nearest = planner_pick.nearest_node(|s| {
-                    if let Step::Sample(count) = s {
-                        Ok::<_, ()>(Step::SampleNearest(count))
-                    } else {
-                        panic!("Invalid state on nearest node step: {:?}", s)
-                    }
+                let planner_nearest = planner_sample.closest_to_sample(|_| {
+                    Ok::<_, ()>(Step::SampleNearest(next_sample))
                 }).unwrap();
 
                 let value = if let &Step::SampleNearest(value) = planner_nearest.rtts_node() {

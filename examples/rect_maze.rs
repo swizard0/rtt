@@ -1,7 +1,7 @@
 extern crate rtt;
 extern crate rand;
 
-use std::cmp::min;
+use std::cmp::{min, max};
 use std::collections::HashSet;
 use rand::Rng;
 
@@ -64,11 +64,8 @@ fn main() {
             }
             iters += 1;
 
-            let row = rng.gen_range(0, height);
-            let col = rng.gen_range(0, width);
-
-            let planner_pick = planner_sample.sample(|rtt| no_err((rtt, (row, col)))).unwrap();
-            let planner_closest = planner_pick.nearest_node(locate_closest).unwrap();
+            let sample = (rng.gen_range(0, height), rng.gen_range(0, width));
+            let planner_closest = planner_sample.closest_to_sample(|v| locate_closest(v, &sample)).unwrap();
 
             let route = {
                 let &RttTrans { ref rtt, sample: ref dst, ref closest_node_ref, } = planner_closest.rtts_node();
@@ -112,23 +109,23 @@ struct RttTrans {
     closest_node_ref: NodeRef,
 }
 
-fn locate_closest((rtt, sample): (RandomTree<Coord>, Coord)) -> Result<RttTrans, !> {
-    fn sq_dist(coord_a: &Coord, coord_b: &Coord) -> usize {
-        (((coord_a.0 as isize - coord_b.0 as isize) * (coord_a.0 as isize - coord_b.0 as isize)) +
-         ((coord_a.1 as isize - coord_b.1 as isize) * (coord_a.1 as isize - coord_b.1 as isize))) as usize
+fn locate_closest(rtt: RandomTree<Coord>, sample: &Coord) -> Result<RttTrans, !> {
+    fn manhattan(coord_a: &Coord, coord_b: &Coord) -> usize {
+        (max(coord_a.0, coord_b.0) - min(coord_a.0, coord_b.0)) +
+            (max(coord_a.1, coord_b.1) - min(coord_a.1, coord_b.1))
     }
     let mut closest;
     {
         let states = rtt.states();
-        closest = (states.root.0, sq_dist(states.root.1, &sample));
+        closest = (states.root.0, manhattan(states.root.1, sample));
         for (node_ref, coord) in states.children {
-            let dist = sq_dist(coord, &sample);
+            let dist = manhattan(coord, sample);
             if dist < closest.1 {
                 closest = (node_ref, dist);
             }
         }
     }
-    no_err(RttTrans { rtt, sample, closest_node_ref: closest.0, })
+    no_err(RttTrans { rtt, sample: *sample, closest_node_ref: closest.0, })
 }
 
 fn perform_move(

@@ -1,6 +1,6 @@
 [package]
 name = "rtt"
-version = "0.2.2"
+version = "0.3.0"
 description = "Rapidly-Exploring random trees path planning algorithm."
 license = "MIT"
 authors = ["Alexey Voznyuk <me@swizard.info>"]
