@@ -122,13 +122,13 @@ pub struct RevPathRefIterator<'a, S: 'a> {
 }
 
 impl<'a, S> Iterator for RevPathRefIterator<'a, S> {
-    type Item = &'a S;
+    type Item = (NodeRef, &'a S);
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(node_index) = self.node {
             let node = &self.nodes[node_index];
             self.node = node.prev;
-            Some(&node.state)
+            Some((NodeRef(node_index), &node.state))
         } else {
             None
         }
