@@ -1,6 +1,6 @@
 [package]
 name = "rtt"
-version = "0.4.2"
+version = "0.4.3"
 description = "Rapidly-Exploring random trees path planning algorithm."
 homepage = "https://github.com/swizard0/rtt"
 repository = "https://github.com/swizard0/rtt"

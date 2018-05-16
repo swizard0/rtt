@@ -137,11 +137,25 @@ impl<RT, NR> PlannerRttNode<RT, NR> {
         trans.into_path(self.rtt, self.node_ref)
     }
 
+    pub fn into_path_ok<TR>(self, trans: TR) -> TR::RttPath
+        where TR: TransIntoPath<RT, NR, Error = util::NeverError>
+    {
+        self.into_path(trans)
+            .unwrap_or_else(|_: util::NeverError| unreachable!())
+    }
+
     pub fn prepare_sample<TR>(mut self, trans: TR) -> Result<PlannerReadyToSample<RT>, TR::Error>
         where TR: TransPrepareSample<RT, NR>
     {
         let () = trans.prepare_sample(&mut self.rtt, self.node_ref)?;
         Ok(PlannerReadyToSample { rtt: self.rtt, })
+    }
+
+    pub fn prepare_sample_ok<TR>(self, trans: TR) -> PlannerReadyToSample<RT>
+        where TR: TransPrepareSample<RT, NR, Error = util::NeverError>
+    {
+        self.prepare_sample(trans)
+            .unwrap_or_else(|_: util::NeverError| unreachable!())
     }
 }
 
@@ -178,6 +192,13 @@ impl<RT> PlannerReadyToSample<RT> {
     {
         let sample = trans.sample(&mut self.rtt)?;
         Ok(PlannerSample { rtt: self.rtt, sample, })
+    }
+
+    pub fn sample_ok<TR>(self, trans: TR) -> PlannerSample<RT, TR::Sample>
+        where TR: TransSample<RT, Error = util::NeverError>
+    {
+        self.sample(trans)
+            .unwrap_or_else(|_: util::NeverError| unreachable!())
     }
 }
 
@@ -220,6 +241,13 @@ impl<RT, S> PlannerSample<RT, S> {
         let node_ref = trans.closest_to_sample(&mut self.rtt, self.sample)?;
         Ok(PlannerClosestNodeFound { rtt: self.rtt, node_ref, })
     }
+
+    pub fn closest_to_sample_ok<TR>(self, trans: TR) -> PlannerClosestNodeFound<RT, TR::RttNodeRef>
+        where TR: TransClosestToSample<RT, S, Error = util::NeverError>
+    {
+        self.closest_to_sample(trans)
+            .unwrap_or_else(|_: util::NeverError| unreachable!())
+    }
 }
 
 // PlannerClosestNodeFound
@@ -243,16 +271,16 @@ impl<RT, NR, F, E> TransNoTransition<RT, NR> for F where F: FnOnce(&mut RT, NR) 
     }
 }
 
-pub trait TransTransition<RT, NR> {
+pub trait TransHasTransition<RT, NR> {
     type Error;
 
-    fn transition(self, rtt: &mut RT, node_ref: NR) -> Result<NR, Self::Error>;
+    fn has_transition(self, rtt: &mut RT, node_ref: NR) -> Result<NR, Self::Error>;
 }
 
-impl<RT, NR, F, E> TransTransition<RT, NR> for F where F: FnOnce(&mut RT, NR) -> Result<NR, E> {
+impl<RT, NR, F, E> TransHasTransition<RT, NR> for F where F: FnOnce(&mut RT, NR) -> Result<NR, E> {
     type Error = E;
 
-    fn transition(self, rtt: &mut RT, node_ref: NR) -> Result<NR, Self::Error> {
+    fn has_transition(self, rtt: &mut RT, node_ref: NR) -> Result<NR, Self::Error> {
         (self)(rtt, node_ref)
     }
 }
@@ -273,11 +301,25 @@ impl<RT, NR> PlannerClosestNodeFound<RT, NR> {
         Ok(PlannerReadyToSample { rtt: self.rtt, })
     }
 
-    pub fn transition<TR>(mut self, trans: TR) -> Result<PlannerRttNode<RT, NR>, TR::Error>
-        where TR: TransTransition<RT, NR>
+    pub fn no_transition_ok<TR>(self, trans: TR) -> PlannerReadyToSample<RT>
+        where TR: TransNoTransition<RT, NR, Error = util::NeverError>
     {
-        let node_ref = trans.transition(&mut self.rtt, self.node_ref)?;
+        self.no_transition(trans)
+            .unwrap_or_else(|_: util::NeverError| unreachable!())
+    }
+
+    pub fn has_transition<TR>(mut self, trans: TR) -> Result<PlannerRttNode<RT, NR>, TR::Error>
+        where TR: TransHasTransition<RT, NR>
+    {
+        let node_ref = trans.has_transition(&mut self.rtt, self.node_ref)?;
         Ok(PlannerRttNode { rtt: self.rtt, node_ref, })
+    }
+
+    pub fn has_transition_ok<TR>(self, trans: TR) -> PlannerRttNode<RT, NR>
+        where TR: TransHasTransition<RT, NR, Error = util::NeverError>
+    {
+        self.has_transition(trans)
+            .unwrap_or_else(|_: util::NeverError| unreachable!())
     }
 }
 
@@ -319,49 +361,49 @@ mod tests {
                 break;
             }
 
-            let mut planner_ready_to_sample = planner_node.prepare_sample(|rtt: &mut Expect, node_ref| {
+            let mut planner_ready_to_sample = planner_node.prepare_sample_ok(|rtt: &mut _, node_ref| {
                 assert_eq!(rtt, &mut Expect::PlannerRttNode);
                 *rtt = Expect::PlannerReadyToSample(node_ref);
-                Ok::<_, ()>(())
-            }).unwrap();
+                Ok(())
+            });
 
             loop {
-                let planner_sample = planner_ready_to_sample.sample(|rtt: &mut Expect| {
+                let planner_sample = planner_ready_to_sample.sample_ok(|rtt: &mut _| {
                     assert_eq!(rtt, &mut Expect::PlannerReadyToSample(expected_nodes_count));
                     sample_counter += 1;
                     *rtt = Expect::PlannerSample(expected_nodes_count);
-                    Ok::<_, ()>(sample_counter)
-                }).unwrap();
+                    Ok(sample_counter)
+                });
                 assert_eq!(planner_sample.sample(), &sample_counter);
 
-                let planner_closest = planner_sample.closest_to_sample(|rtt: &mut Expect, sample| {
+                let planner_closest = planner_sample.closest_to_sample_ok(|rtt: &mut _, sample| {
                     assert_eq!(rtt, &mut Expect::PlannerSample(expected_nodes_count));
                     assert_eq!(sample, sample_counter);
                     *rtt = Expect::PlannerClosestNodeFound(expected_nodes_count);
-                    Ok::<_, ()>(expected_nodes_count)
-                }).unwrap();
+                    Ok(expected_nodes_count)
+                });
 
                 if sample_counter % 2 == 0 {
-                    planner_node = planner_closest.transition(|rtt: &mut Expect, node_ref| {
+                    planner_node = planner_closest.has_transition_ok(|rtt: &mut _, node_ref| {
                         assert_eq!(rtt, &mut Expect::PlannerClosestNodeFound(expected_nodes_count));
                         *rtt = Expect::PlannerRttNode;
-                        Ok::<_, ()>(node_ref + 1)
-                    }).unwrap();
+                        Ok(node_ref + 1)
+                    });
                     break;
                 } else {
-                    planner_ready_to_sample = planner_closest.no_transition(|rtt: &mut Expect, _node_ref| {
+                    planner_ready_to_sample = planner_closest.no_transition_ok(|rtt: &mut _, _node_ref| {
                         assert_eq!(rtt, &mut Expect::PlannerClosestNodeFound(expected_nodes_count));
                         *rtt = Expect::PlannerReadyToSample(expected_nodes_count);
-                        Ok::<_, ()>(())
-                    }).unwrap();
+                        Ok(())
+                    });
                 }
             }
         }
 
-        let path = planner_node.into_path(|rtt: Expect, node_ref| {
+        let path = planner_node.into_path_ok(|rtt, node_ref| {
             assert_eq!(rtt, Expect::PlannerRttNode);
-            Ok::<_, ()>(node_ref)
-        }).unwrap();
+            Ok(node_ref)
+        });
         assert_eq!(path, sample_counter / 2 + 1);
     }
 }
