@@ -213,14 +213,14 @@ pub trait TransClosestToSample<RT, S> {
     type RttNodeRef;
     type Error;
 
-    fn closest_to_sample(self, rtt: &mut RT, sample: S) -> Result<Self::RttNodeRef, Self::Error>;
+    fn closest_to_sample(self, rtt: &mut RT, sample: &S) -> Result<Self::RttNodeRef, Self::Error>;
 }
 
-impl<RT, S, F, NR, E> TransClosestToSample<RT, S> for F where F: FnOnce(&mut RT, S) -> Result<NR, E> {
+impl<RT, S, F, NR, E> TransClosestToSample<RT, S> for F where F: FnOnce(&mut RT, &S) -> Result<NR, E> {
     type RttNodeRef = NR;
     type Error = E;
 
-    fn closest_to_sample(self, rtt: &mut RT, sample: S) -> Result<Self::RttNodeRef, Self::Error> {
+    fn closest_to_sample(self, rtt: &mut RT, sample: &S) -> Result<Self::RttNodeRef, Self::Error> {
         (self)(rtt, sample)
     }
 }
@@ -235,14 +235,14 @@ impl<RT, S> PlannerSample<RT, S> {
     }
 
     pub fn closest_to_sample<TR>(mut self, trans: TR) ->
-        Result<PlannerClosestNodeFound<RT, TR::RttNodeRef>, TR::Error>
+        Result<PlannerClosestNodeFound<RT, TR::RttNodeRef, S>, TR::Error>
         where TR: TransClosestToSample<RT, S>
     {
-        let node_ref = trans.closest_to_sample(&mut self.rtt, self.sample)?;
-        Ok(PlannerClosestNodeFound { rtt: self.rtt, node_ref, })
+        let node_ref = trans.closest_to_sample(&mut self.rtt, &self.sample)?;
+        Ok(PlannerClosestNodeFound { rtt: self.rtt, node_ref, sample: self.sample, })
     }
 
-    pub fn closest_to_sample_ok<TR>(self, trans: TR) -> PlannerClosestNodeFound<RT, TR::RttNodeRef>
+    pub fn closest_to_sample_ok<TR>(self, trans: TR) -> PlannerClosestNodeFound<RT, TR::RttNodeRef, S>
         where TR: TransClosestToSample<RT, S, Error = util::NeverError>
     {
         self.closest_to_sample(trans)
@@ -252,9 +252,10 @@ impl<RT, S> PlannerSample<RT, S> {
 
 // PlannerClosestNodeFound
 
-pub struct PlannerClosestNodeFound<RT, NR> {
+pub struct PlannerClosestNodeFound<RT, NR, S> {
     rtt: RT,
     node_ref: NR,
+    sample: S,
 }
 
 pub trait TransNoTransition<RT, NR> {
@@ -271,27 +272,31 @@ impl<RT, NR, F, E> TransNoTransition<RT, NR> for F where F: FnOnce(&mut RT, NR) 
     }
 }
 
-pub trait TransHasTransition<RT, NR> {
+pub trait TransHasTransition<RT, NR, S> {
     type Error;
 
-    fn has_transition(self, rtt: &mut RT, node_ref: NR) -> Result<NR, Self::Error>;
+    fn has_transition(self, rtt: &mut RT, node_ref: NR, sample: S) -> Result<NR, Self::Error>;
 }
 
-impl<RT, NR, F, E> TransHasTransition<RT, NR> for F where F: FnOnce(&mut RT, NR) -> Result<NR, E> {
+impl<RT, NR, S, F, E> TransHasTransition<RT, NR, S> for F where F: FnOnce(&mut RT, NR, S) -> Result<NR, E> {
     type Error = E;
 
-    fn has_transition(self, rtt: &mut RT, node_ref: NR) -> Result<NR, Self::Error> {
-        (self)(rtt, node_ref)
+    fn has_transition(self, rtt: &mut RT, node_ref: NR, sample: S) -> Result<NR, Self::Error> {
+        (self)(rtt, node_ref, sample)
     }
 }
 
-impl<RT, NR> PlannerClosestNodeFound<RT, NR> {
+impl<RT, NR, S> PlannerClosestNodeFound<RT, NR, S> {
     pub fn rtt(&self) -> &RT {
         &self.rtt
     }
 
     pub fn node_ref(&self) -> &NR {
         &self.node_ref
+    }
+
+    pub fn sample(&self) -> &S {
+        &self.sample
     }
 
     pub fn no_transition<TR>(mut self, trans: TR) -> Result<PlannerReadyToSample<RT>, TR::Error>
@@ -309,14 +314,14 @@ impl<RT, NR> PlannerClosestNodeFound<RT, NR> {
     }
 
     pub fn has_transition<TR>(mut self, trans: TR) -> Result<PlannerRttNode<RT, NR>, TR::Error>
-        where TR: TransHasTransition<RT, NR>
+        where TR: TransHasTransition<RT, NR, S>
     {
-        let node_ref = trans.has_transition(&mut self.rtt, self.node_ref)?;
+        let node_ref = trans.has_transition(&mut self.rtt, self.node_ref, self.sample)?;
         Ok(PlannerRttNode { rtt: self.rtt, node_ref, })
     }
 
     pub fn has_transition_ok<TR>(self, trans: TR) -> PlannerRttNode<RT, NR>
-        where TR: TransHasTransition<RT, NR, Error = util::NeverError>
+        where TR: TransHasTransition<RT, NR, S, Error = util::NeverError>
     {
         self.has_transition(trans)
             .unwrap_or_else(|_: util::NeverError| unreachable!())
@@ -376,16 +381,17 @@ mod tests {
                 });
                 assert_eq!(planner_sample.sample(), &sample_counter);
 
-                let planner_closest = planner_sample.closest_to_sample_ok(|rtt: &mut _, sample| {
+                let planner_closest = planner_sample.closest_to_sample_ok(|rtt: &mut _, sample: &_| {
                     assert_eq!(rtt, &mut Expect::PlannerSample(expected_nodes_count));
-                    assert_eq!(sample, sample_counter);
+                    assert_eq!(sample, &sample_counter);
                     *rtt = Expect::PlannerClosestNodeFound(expected_nodes_count);
                     Ok(expected_nodes_count)
                 });
 
                 if sample_counter % 2 == 0 {
-                    planner_node = planner_closest.has_transition_ok(|rtt: &mut _, node_ref| {
+                    planner_node = planner_closest.has_transition_ok(|rtt: &mut _, node_ref, sample| {
                         assert_eq!(rtt, &mut Expect::PlannerClosestNodeFound(expected_nodes_count));
+                        assert_eq!(sample, sample_counter);
                         *rtt = Expect::PlannerRttNode;
                         Ok(node_ref + 1)
                     });
