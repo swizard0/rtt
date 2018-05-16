@@ -273,15 +273,17 @@ impl<RT, NR, F, E> TransNoTransition<RT, NR> for F where F: FnOnce(&mut RT, NR) 
 }
 
 pub trait TransHasTransition<RT, NR, S> {
+    type RttNodeRef;
     type Error;
 
-    fn has_transition(self, rtt: &mut RT, node_ref: NR, sample: S) -> Result<NR, Self::Error>;
+    fn has_transition(self, rtt: &mut RT, node_ref: NR, sample: S) -> Result<Self::RttNodeRef, Self::Error>;
 }
 
-impl<RT, NR, S, F, E> TransHasTransition<RT, NR, S> for F where F: FnOnce(&mut RT, NR, S) -> Result<NR, E> {
+impl<RT, NR, S, F, NRO, E> TransHasTransition<RT, NR, S> for F where F: FnOnce(&mut RT, NR, S) -> Result<NRO, E> {
+    type RttNodeRef = NRO;
     type Error = E;
 
-    fn has_transition(self, rtt: &mut RT, node_ref: NR, sample: S) -> Result<NR, Self::Error> {
+    fn has_transition(self, rtt: &mut RT, node_ref: NR, sample: S) -> Result<Self::RttNodeRef, Self::Error> {
         (self)(rtt, node_ref, sample)
     }
 }
@@ -313,14 +315,14 @@ impl<RT, NR, S> PlannerClosestNodeFound<RT, NR, S> {
             .unwrap_or_else(|_: util::NeverError| unreachable!())
     }
 
-    pub fn has_transition<TR>(mut self, trans: TR) -> Result<PlannerRttNode<RT, NR>, TR::Error>
+    pub fn has_transition<TR>(mut self, trans: TR) -> Result<PlannerRttNode<RT, TR::RttNodeRef>, TR::Error>
         where TR: TransHasTransition<RT, NR, S>
     {
         let node_ref = trans.has_transition(&mut self.rtt, self.node_ref, self.sample)?;
         Ok(PlannerRttNode { rtt: self.rtt, node_ref, })
     }
 
-    pub fn has_transition_ok<TR>(self, trans: TR) -> PlannerRttNode<RT, NR>
+    pub fn has_transition_ok<TR>(self, trans: TR) -> PlannerRttNode<RT, TR::RttNodeRef>
         where TR: TransHasTransition<RT, NR, S, Error = util::NeverError>
     {
         self.has_transition(trans)
