@@ -16,7 +16,7 @@ Theory:
 
 ## Library
 
-`rtt` is a Rust crate with a very abstract algorithm implementation. Everything outside of raw algorithm (sampling, memory management, nearest node search etc) is left to library user.
+`rtt` is a Rust crate with a very abstract algorithm implementation. The library itself provides only a _protocol_ to follow. Everything outside of raw algorithm (sampling, memory management, nearest node search etc) is left to library user.
 
 Several useful data structures and helpers are available in `rtt::util` module for your convenience, such as:
 - [rtt::util::rtt::vec_slist](src/util/rtt/vec_slist.rs): single-linked tree implemented over `Vec`
@@ -47,3 +47,11 @@ Path planned in 2707 iterations:
 #  ++++++     #
 ###############
 ```
+
+## Authors
+
+* **Alexey Voznyuk** - *Initial work* - [swizard0](https://github.com/swizard0)
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
